@@ -1,0 +1,16 @@
+# Dependências do Garimpeiro de Imóveis
+
+# Web Scraping com Playwright
+playwright>=1.40.0
+
+# Configuração via YAML
+PyYAML>=6.0
+
+# Variáveis de ambiente
+python-dotenv>=1.0.0
+
+# Requisições HTTP
+requests>=2.31.0
+
+# Type hints (Python < 3.10)
+typing-extensions>=4.7.0

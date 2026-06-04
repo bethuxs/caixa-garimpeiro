@@ -1,0 +1,53 @@
+# ============================================================================
+# Configurações do Garimpeiro de Imóveis - Caixa Econômica Federal
+# ============================================================================
+
+# Configurações de Busca no Portal da Caixa
+busca:
+  estado: "PR"
+  # Mapeamento de Cidades (Nome: Código IBGE)
+  cidades:
+    - nome: "Curitiba"
+      codigo: "410690"
+    - nome: "Pinhais"
+      codigo: "411915"
+  # Modalidades desejadas: 33 (Venda Online), 34 (Venda Direta Online)
+  modalidades: [33, 34]
+
+# Filtros aplicados em memória após a raspagem
+filtros:
+  preco_maximo: 200000.00
+  bairros_alvo:
+    - "TARUMÃ"
+    - "BAIRRO ALTO"
+    - "CAPÃO DA IMBUIA"
+    - "ALTO TARUMÃ"
+
+# Configurações do Playwright
+playwright:
+  headless: true
+  # Timeout em ms para esperar elementos
+  timeout: 10000
+  # Tempo de espera entre requisições (em segundos)
+  wait_between_requests: 2
+  # Número máximo de tentativas para carregar a página
+  max_retries: 3
+  # User-Agent customizado
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+
+# Configurações de Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "scraper.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Configurações do Banco de Dados
+database:
+  path: "database.db"
+  # Limpeza automática de registros antigos (em dias)
+  cleanup_days: 90
+
+# URLs do Portal
+urls:
+  base_url: "https://venda-imoveis.caixa.gov.br"
+  search_page: "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp"
