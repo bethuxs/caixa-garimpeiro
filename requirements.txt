@@ -14,3 +14,7 @@ requests>=2.31.0
 
 # Type hints (Python < 3.10)
 typing-extensions>=4.7.0
+
+# Web Framework
+Flask>=2.3.0
+Flask-CORS>=4.0.0

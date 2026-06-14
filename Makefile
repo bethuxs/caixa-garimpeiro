@@ -82,7 +82,11 @@ test-telegram:
 	@echo "Testando conexão com Telegram..."
 	@if [ -f .env ]; then \
 		. .env; \
-		$(VENV_PYTHON) -c "from scraper import TelegramNotifier; TelegramNotifier('$$TELEGRAM_TOKEN', '$$TELEGRAM_CHAT_ID').enviar_teste()"; \
+		if [ -z "$$TELEGRAM_CREDENTIALS" ]; then \
+			echo "❌ TELEGRAM_CREDENTIALS não definido. Use formato: token:chat_id"; \
+			exit 1; \
+		fi; \
+		$(VENV_PYTHON) -c "creds='$$TELEGRAM_CREDENTIALS'.split(':'); from scraper import TelegramNotifier; TelegramNotifier(creds[0], creds[1]).enviar_teste()"; \
 	else \
 		echo "❌ Arquivo .env não encontrado"; \
 		exit 1; \

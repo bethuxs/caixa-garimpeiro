@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Garimpeiro de Imóveis{% endblock %}
+
+{% block content %}
+<div class="container">
+    {% if error %}
+    <div class="alert alert-danger">
+        <strong>Erro:</strong> {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Cards de Resumo -->
+    <section class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <h3>Total de Imóveis</h3>
+                <p class="stat-value">{{ total_imoveis }}</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">📈</div>
+            <div class="stat-content">
+                <h3>Esta Semana</h3>
+                <p class="stat-value">{{ imoveis_semana }}</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-content">
+                <h3>Preço Médio</h3>
+                <p class="stat-value" id="preco-medio">R$ {{ "%.2f"|format(preco_medio) }}</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">📍</div>
+            <div class="stat-content">
+                <h3>Bairros</h3>
+                <p class="stat-value">{{ total_bairros }}</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filtros -->
+    <section class="filtros-section">
+        <h2>Filtros</h2>
+        <div class="filtros-container">
+            <div class="filtro-grupo">
+                <label for="filtro-bairro">Bairro:</label>
+                <select id="filtro-bairro">
+                    <option value="">Todos</option>
+                </select>
+            </div>
+
+            <div class="filtro-grupo">
+                <label for="filtro-preco-min">Preço Mínimo (R$):</label>
+                <input type="number" id="filtro-preco-min" placeholder="0" min="0">
+            </div>
+
+            <div class="filtro-grupo">
+                <label for="filtro-preco-max">Preço Máximo (R$):</label>
+                <input type="number" id="filtro-preco-max" placeholder="999999" min="0">
+            </div>
+
+            <div class="filtro-grupo">
+                <label for="filtro-ordenar">Ordenar por:</label>
+                <select id="filtro-ordenar">
+                    <option value="data_insercao">Mais Recentes</option>
+                    <option value="preco">Menor Preço</option>
+                    <option value="bairro">Bairro (A-Z)</option>
+                </select>
+            </div>
+
+            <button id="btn-filtrar" class="btn btn-primary">🔍 Filtrar</button>
+            <button id="btn-limpar" class="btn btn-secondary">🔄 Limpar</button>
+        </div>
+    </section>
+
+    <!-- Lista de Imóveis -->
+    <section id="imoveis" class="imoveis-section">
+        <h2>Imóveis Disponíveis</h2>
+        
+        <div class="controls">
+            <div class="info-texto">
+                <span id="total-encontrados">Carregando...</span>
+            </div>
+            <button id="btn-exportar" class="btn btn-secondary">⬇️ Exportar JSON</button>
+        </div>
+
+        <div id="imoveis-container" class="imoveis-grid">
+            <div class="loading">Carregando imóveis...</div>
+        </div>
+
+        <!-- Paginação -->
+        <div id="paginacao" class="paginacao" style="display: none;">
+            <button id="btn-anterior" class="btn btn-secondary">← Anterior</button>
+            <span id="info-pagina">Página 1</span>
+            <button id="btn-proximo" class="btn btn-secondary">Próximo →</button>
+        </div>
+    </section>
+
+    <!-- Estatísticas -->
+    <section id="estatisticas" class="stats-section">
+        <h2>Estatísticas Detalhadas</h2>
+        
+        <div class="stats-detalhes">
+            <div class="stats-box">
+                <h3>Top 10 Bairros</h3>
+                <ul id="top-bairros" class="lista-stats">
+                    <li>Carregando...</li>
+                </ul>
+            </div>
+
+            <div class="stats-box">
+                <h3>Cidades</h3>
+                <ul id="cidades" class="lista-stats">
+                    <li>Carregando...</li>
+                </ul>
+            </div>
+
+            <div class="stats-box">
+                <h3>Modalidades</h3>
+                <ul id="modalidades" class="lista-stats">
+                    <li>Carregando...</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- Modal de Detalhes -->
+<div id="modal-detalhe" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="modal-close">&times;</span>
+        <div id="modal-body">
+            <!-- Conteúdo carregado via JS -->
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Dados iniciais
+    const totalImoveis = {{ total_imoveis }};
+    let paginaAtual = 1;
+    const imovelsPorPagina = 20;
+
+    // Variáveis de filtro
+    let filtrosBuscaAtivos = {
+        bairro: '',
+        preco_min: 0,
+        preco_max: 999999999,
+        ordenar: 'data_insercao'
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+        carregarBairros();
+        carregarEstatisticas();
+        carregarImoveis();
+
+        // Event listeners dos filtros
+        document.getElementById('btn-filtrar').addEventListener('click', () => {
+            paginaAtual = 1;
+            aplicarFiltros();
+        });
+
+        document.getElementById('btn-limpar').addEventListener('click', () => {
+            document.getElementById('filtro-bairro').value = '';
+            document.getElementById('filtro-preco-min').value = '';
+            document.getElementById('filtro-preco-max').value = '';
+            document.getElementById('filtro-ordenar').value = 'data_insercao';
+            paginaAtual = 1;
+            filtrosBuscaAtivos = {
+                bairro: '',
+                preco_min: 0,
+                preco_max: 999999999,
+                ordenar: 'data_insercao'
+            };
+            carregarImoveis();
+        });
+
+        document.getElementById('btn-exportar').addEventListener('click', exportarJSON);
+        document.getElementById('btn-anterior').addEventListener('click', () => {
+            if (paginaAtual > 1) {
+                paginaAtual--;
+                carregarImoveis();
+                window.scrollTo(0, 0);
+            }
+        });
+
+        document.getElementById('btn-proximo').addEventListener('click', () => {
+            paginaAtual++;
+            carregarImoveis();
+            window.scrollTo(0, 0);
+        });
+
+        // Modal close
+        document.querySelector('.modal-close').addEventListener('click', () => {
+            document.getElementById('modal-detalhe').style.display = 'none';
+        });
+
+        window.addEventListener('click', (e) => {
+            const modal = document.getElementById('modal-detalhe');
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    });
+</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

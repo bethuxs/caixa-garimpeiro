@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}500 - Erro do Servidor{% endblock %}
+
+{% block content %}
+<div class="container error-container">
+    <div class="error-content">
+        <h1 class="error-code">500</h1>
+        <h2>Erro Interno do Servidor</h2>
+        <p>Ocorreu um erro ao processar sua requisição. Por favor, tente novamente mais tarde.</p>
+        <a href="/" class="btn btn-primary">← Voltar ao Dashboard</a>
+    </div>
+</div>
+{% endblock %}

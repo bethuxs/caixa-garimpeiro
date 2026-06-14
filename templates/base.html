@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Garimpeiro de Imóveis - Caixa{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Header/Navbar -->
+    <header class="navbar">
+        <div class="container">
+            <div class="navbar-brand">
+                <h1>🏠 Garimpeiro de Imóveis</h1>
+                <p class="subtitle">Caixa Econômica Federal - Região Leste de Curitiba</p>
+            </div>
+            <nav class="navbar-menu">
+                <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
+                <a href="/#imoveis" class="nav-link">Imóveis</a>
+                <a href="/#estatisticas" class="nav-link">Estatísticas</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 Garimpeiro de Imóveis - MVP | 
+               <a href="https://github.com/bethuxs/caixa-garimpeiro" target="_blank">GitHub</a>
+            </p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
