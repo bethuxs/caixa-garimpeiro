@@ -17,6 +17,7 @@ Dependências:
 
 import os
 import sqlite3
+import json
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -444,6 +445,93 @@ def link_imovel(id_imovel):
                 document.getElementById('frmlista').submit();
             }}, 500);
             </script>
+        </body>
+        </html>
+        """
+        
+        return html, 200, {'Content-Type': 'text/html; charset=UTF-8'}
+        
+    except Exception as e:
+        return render_template("500.html"), 500
+
+
+@app.route("/debug/link-imovel/<id_imovel>")
+def debug_link_imovel(id_imovel):
+    """
+    Endpoint de debug: Muestra los datos del formulario SIN auto-submit
+    para verificar que los valores se están rellenando correctamente.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ? AND activo = 1", (id_imovel,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return render_template("404.html"), 404
+        
+        # Convertir row a diccionario usando cursor.description
+        cols_names = [description[0] for description in cursor.description]
+        imovel = dict(zip(cols_names, row))
+        
+        # DEBUG HTML que MUESTRA el formulario sin auto-submit
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>DEBUG: Datos del Formulario</title>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial; margin: 20px; background: #f5f5f5; }}
+                .container {{ max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 5px; }}
+                h1 {{ color: #333; }}
+                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+                td {{ border: 1px solid #ddd; padding: 10px; }}
+                td:first-child {{ background: #f9f9f9; font-weight: bold; width: 30%; }}
+                .imovel-data {{ background: #e3f2fd; padding: 10px; margin: 20px 0; border-radius: 3px; }}
+                .form-data {{ background: #fff3e0; padding: 10px; margin: 20px 0; border-radius: 3px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🔍 DEBUG: Endpoint /link-imovel/{id_imovel}</h1>
+                
+                <h2>Datos del Inmueble (BD):</h2>
+                <div class="imovel-data">
+                    <table>
+                        <tr><td>ID Inmueble</td><td>{imovel.get('id_imovel', 'N/A')}</td></tr>
+                        <tr><td>Ciudad</td><td>{imovel.get('cidade', 'N/A')}</td></tr>
+                        <tr><td>Modalidad</td><td>{imovel.get('modalidade', 'N/A')}</td></tr>
+                        <tr><td>Precio</td><td>R$ {imovel.get('preco', 'N/A')}</td></tr>
+                        <tr><td>Bairro</td><td>{imovel.get('bairro', 'N/A')}</td></tr>
+                        <tr><td>Código</td><td>{imovel.get('codigo', 'N/A')}</td></tr>
+                        <tr><td>Activo</td><td>{imovel.get('activo', 'N/A')}</td></tr>
+                    </table>
+                </div>
+                
+                <h2>Datos del Formulario (que se enviarán a Caixa):</h2>
+                <div class="form-data">
+                    <table>
+                        <tr><td>hdnimovel</td><td>{imovel.get('id_imovel', id_imovel)}</td></tr>
+                        <tr><td>hdn_estado</td><td>PR</td></tr>
+                        <tr><td>hdn_cidade</td><td>{imovel.get('cidade', '')}</td></tr>
+                        <tr><td>hdn_modalidade</td><td>{imovel.get('modalidade', '')}</td></tr>
+                        <tr><td>hdn_vlr_maximo</td><td>{imovel.get('preco', '')}</td></tr>
+                    </table>
+                </div>
+                
+                <h2>Acciones:</h2>
+                <ul>
+                    <li><a href="/link-imovel/{id_imovel}">► Enviar formulario a Caixa (auto-submit)</a></li>
+                    <li><a href="/">← Volver al inicio</a></li>
+                </ul>
+                
+                <h2>JSON (para debugging):</h2>
+                <pre style="background: #f5f5f5; padding: 10px; overflow-x: auto;">
+{json.dumps(imovel, indent=2, default=str)}
+                </pre>
+            </div>
         </body>
         </html>
         """
