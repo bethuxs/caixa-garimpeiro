@@ -110,6 +110,30 @@ SORT_OPTIONS = {
 }
 
 
+MODALIDADES_MAP = {
+    "14": "Leilão SFI - Edital Único",
+    "33": "Venda Online (Melhor Oferta)",
+    "34": "Venda Direta Online",
+}
+MODALIDADES_REVERSE_MAP = {
+    nome.upper(): codigo
+    for codigo, nome in MODALIDADES_MAP.items()
+}
+
+
+def modalidade_nome_from_filter(value):
+    """Convierte el código de modalidad del filtro al texto guardado en BD."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    return MODALIDADES_MAP.get(value, value)
+
+
+def modalidade_codigo_from_nome(nome):
+    """Convierte el texto guardado en BD al código usado por los filtros web."""
+    return MODALIDADES_REVERSE_MAP.get((nome or "").upper(), nome or "")
+
+
 # ============================================================================
 # ROTAS DA API
 # ============================================================================
@@ -185,8 +209,9 @@ def api_imoveis():
 
         # Filtro por modalidad
         if modalidade:
+            modalidade_filtro = modalidade_nome_from_filter(modalidade)
             filtros_sql.append("UPPER(COALESCE(modalidade, '')) = ?")
-            params.append(modalidade.upper())
+            params.append(modalidade_filtro.upper())
         
         # Ordenación
         order_col, order_dir = SORT_OPTIONS.get(ordenar, SORT_OPTIONS["data_insercao"])
@@ -371,14 +396,22 @@ def api_modalidades():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT DISTINCT modalidade
+            SELECT modalidade, COUNT(*) as total
             FROM imoveis
             WHERE activo = 1
               AND modalidade IS NOT NULL
               AND TRIM(modalidade) != ''
+            GROUP BY modalidade
             ORDER BY modalidade
         """)
-        modalidades = [row["modalidade"] for row in cursor.fetchall()]
+        modalidades = [
+            {
+                "codigo": modalidade_codigo_from_nome(row["modalidade"]),
+                "modalidade": row["modalidade"],
+                "total": row["total"],
+            }
+            for row in cursor.fetchall()
+        ]
         conn.close()
 
         return jsonify({

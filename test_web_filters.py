@@ -97,7 +97,23 @@ class TestWebFilters(unittest.TestCase):
         precos = [imovel["preco"] for imovel in response.json["imoveis"]]
         self.assertEqual(precos, [900000.0, 450000.0, 100000.0])
 
-    def test_filtra_por_modalidade(self):
+    def test_filtra_por_codigo_de_modalidade(self):
+        response = self.client.get(
+            "/api/imoveis?modalidade=34&ordenar=preco_asc&limit=10"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["total"], 2)
+        self.assertEqual(
+            [imovel["modalidade"] for imovel in response.json["imoveis"]],
+            ["Venda Direta Online", "Venda Direta Online"],
+        )
+        self.assertEqual(
+            [imovel["preco"] for imovel in response.json["imoveis"]],
+            [100000.0, 450000.0],
+        )
+
+    def test_filtra_por_texto_de_modalidade_por_compatibilidad(self):
         response = self.client.get(
             "/api/imoveis?modalidade=Venda%20Direta%20Online&ordenar=preco_asc&limit=10"
         )
@@ -118,8 +134,16 @@ class TestWebFilters(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["modalidades"], [
-            "Leilão SFI - Edital Único",
-            "Venda Direta Online",
+            {
+                "codigo": "14",
+                "modalidade": "Leilão SFI - Edital Único",
+                "total": 1,
+            },
+            {
+                "codigo": "34",
+                "modalidade": "Venda Direta Online",
+                "total": 2,
+            },
         ])
 
 

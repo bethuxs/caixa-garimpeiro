@@ -72,10 +72,18 @@ async function carregarModalidades() {
 
         if (data.sucesso) {
             const select = document.getElementById('filtro-modalidade');
-            data.modalidades.forEach(modalidade => {
+            if (!select) {
+                return;
+            }
+
+            data.modalidades.forEach(item => {
+                const codigo = item.codigo || item;
+                const modalidade = item.modalidade || item;
                 const option = document.createElement('option');
-                option.value = modalidade;
-                option.textContent = modalidade;
+                option.value = codigo;
+                option.textContent = codigo && codigo !== modalidade
+                    ? `${codigo} - ${modalidade}`
+                    : modalidade;
                 select.appendChild(option);
             });
         }
