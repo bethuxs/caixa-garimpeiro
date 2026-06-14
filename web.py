@@ -382,6 +382,68 @@ def api_exportar():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 
+@app.route("/link-imovel/<id_imovel>")
+def link_imovel(id_imovel):
+    """
+    Redirige al detalle del imóvel en Caixa usando POST (detalhe_imovel()).
+    
+    Este endpoint genera un formulario HTML que auto-submit para simular
+    lo que sucede cuando se hace click en un imóvel en el portal Caixa.
+    El formulario llena los hidden fields y hace POST a detalhe-imovel.asp.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ?", (id_imovel,))
+        imovel = cursor.fetchone()
+        conn.close()
+        
+        if not imovel:
+            return render_template("404.html"), 404
+        
+        # Retornar HTML con formulario auto-submit que simula detalhe_imovel()
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Carregando detalhes...</title>
+            <meta charset="UTF-8">
+        </head>
+        <body>
+            <p>Carregando detalhes do imóvel {id_imovel}...</p>
+            
+            <form id="frmlista" method="POST" action="https://venda-imoveis.caixa.gov.br/sistema/venda-online/detalhe-imovel.asp" style="display:none;">
+                <input type="hidden" id="hdnimovel" name="hdnimovel" value="{id_imovel}">
+                <input type="hidden" id="hdn_estado" name="hdn_estado" value="">
+                <input type="hidden" id="hdn_cidade" name="hdn_cidade" value="">
+                <input type="hidden" id="hdn_modalidade" name="hdn_modalidade" value="">
+                <input type="hidden" id="hdn_tp_imovel" name="hdn_tp_imovel" value="">
+                <input type="hidden" id="hdn_quartos" name="hdn_quartos" value="">
+                <input type="hidden" id="hdn_vg_garagem" name="hdn_vg_garagem" value="">
+                <input type="hidden" id="hdn_area_util" name="hdn_area_util" value="">
+                <input type="hidden" id="hdn_faixa_vlr" name="hdn_faixa_vlr" value="">
+                <input type="hidden" id="hdn_vlr_maximo" name="hdn_vlr_maximo" value="">
+                <input type="hidden" id="hdnValorSimulador" name="hdnValorSimulador" value="">
+                <input type="hidden" id="hdnAceitaFGTS" name="hdnAceitaFGTS" value="">
+                <input type="hidden" id="hdnAceitaFinanciamento" name="hdnAceitaFinanciamento" value="">
+                <input type="hidden" id="hdnOrigem" name="hdnOrigem" value="buscaimovel">
+                <input type="hidden" id="hdnSalvarDadosCliente" name="hdnSalvarDadosCliente" value="N">
+            </form>
+            
+            <script>
+            // Enviar el formulario automáticamente (simula detalhe_imovel())
+            document.getElementById('frmlista').submit();
+            </script>
+        </body>
+        </html>
+        """
+        
+        return html, 200, {'Content-Type': 'text/html; charset=UTF-8'}
+        
+    except Exception as e:
+        return render_template("500.html"), 500
+
+
 @app.route("/api/sincronizar", methods=["POST"])
 def api_sincronizar():
     """

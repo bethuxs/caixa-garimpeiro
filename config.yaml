@@ -54,3 +54,7 @@ database:
 urls:
   base_url: "https://venda-imoveis.caixa.gov.br"
   search_page: "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
+  # URL base para links de imoveis locais (apunta a web.py endpoint /link-imovel/<id>)
+  # Localhost en desarrollo: http://localhost:5000
+  # Producción: http://caixa.tecnofalls.com.br
+  web_base_url: "http://localhost:5000"

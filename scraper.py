@@ -1051,120 +1051,84 @@ class CaixaScraper:
             
             self.logger.info("=== FIN DEBUG ===\n")
             
-            # MANEJO DE PAGINACIÓN - Iterar sobre todas las páginas
-            pagina_num = 1
-            max_paginas = 100  # Seguridad - máximo de páginas a procesar
+            # MANEJO DE SCROLL INFINITO - Cargar todos los items con scroll
+            # Caixa usa lazy-load: necesitamos scroll para cargar más resultados
+            max_scrolls = 50  # Máximo de scrolls para evitar loops infinitos
+            scroll_count = 0
+            ultima_cantidad = 0
+            sin_cambios_count = 0
             
-            while pagina_num <= max_paginas:
-                self.logger.info(f"\n--- Procesando página {pagina_num} ---")
+            while scroll_count < max_scrolls:
+                scroll_count += 1
                 
                 # Intentar con varios selectores para encontrar resultados
                 selectors_to_try = [
-                    "li.group-block-item",  # Priorizar items individuales
-                    self.SELECTORS["linhas_imovel"],  # li.group-block-item (backup)
-                    self.SELECTORS["contenedor_resultados"],  # #listaimoveispaginacao (contenedor)
+                    "li.group-block-item",
+                    self.SELECTORS["linhas_imovel"],
+                    self.SELECTORS["contenedor_resultados"],
                     ".resultado-busca",
                     ".resultado",
                     "div[class*='resultado']",
-                    "table",
                     ".imovel",
                     "div[class*='imovel']"
                 ]
                 
                 linhas = []
-                matched_selector = None
-                
                 for selector in selectors_to_try:
                     try:
                         linhas = await self.page.query_selector_all(selector)
                         if linhas:
-                            matched_selector = selector
                             self.logger.info(f"✓ Encontrados {len(linhas)} items con selector: '{selector}'")
                             break
                     except:
                         continue
                 
-                # Si no encontramos items, capturar HTML para análisis
+                # Si no encontramos items, verificar si es "no resultados"
                 if not linhas:
                     page_html = await self.page.content()
-                    
-                    # Verificar si es página de "no resultados"
-                    if "Nenhum Resultado" in page_html or "nenhum resultado" in page_html.lower() or "no results" in page_html.lower():
+                    if "Nenhum Resultado" in page_html or "nenhum resultado" in page_html.lower():
                         self.logger.warning("Página indica: Nenhum resultado encontrado")
                         break
                     
                     # Guardar HTML para análisis
                     with open("resultado_extraccion.html", "w", encoding="utf-8") as f:
                         f.write(page_html)
-                    self.logger.debug("HTML completo guardado en resultado_extraccion.html")
-                    
-                    # Intentar extraer de tablas
-                    try:
-                        linhas = await self.page.query_selector_all("table tbody tr")
-                        if linhas:
-                            self.logger.info(f"✓ Encontrados {len(linhas)} items en table tbody tr")
-                    except:
-                        pass
-                
-                # Si seguimos sin resultados, salir
-                if not linhas:
-                    self.logger.warning("No se encontraron resultados en esta página")
+                    self.logger.debug("HTML guardado en resultado_extraccion.html")
                     break
                 
-                # Extraer datos de cada fila
-                self.logger.info(f"Procesando {len(linhas)} linhas/items...")
+                # Procesar los items NUEVOS (desde ultima_cantidad hasta ahora)
+                self.logger.info(f"\nScroll {scroll_count}: Total {len(linhas)} items (últimos procesados: {ultima_cantidad})")
                 
-                for i, linha in enumerate(linhas):
+                for i in range(ultima_cantidad, len(linhas)):
                     try:
+                        linha = linhas[i]
                         imovel = await self._extrair_dados_linha(linha, cidade_atual=cidade_atual)
                         if imovel:
                             imoveis.append(imovel)
                             self.logger.debug(f"Imóvel {i+1} extraído: {imovel.bairro}, R$ {imovel.preco}")
                     except Exception as e:
-                        self.logger.debug(f"Erro ao extrair dados de linha {i}: {e}")
+                        self.logger.debug(f"Erro ao extrair dados de línea {i}: {e}")
                         continue
                 
-                self.logger.info(f"Total acumulado en página {pagina_num}: {len(imoveis)} imóveis")
+                # Si el número de items no cambió en 3 scrolls consecutivos, probablemente terminamos
+                if len(linhas) == ultima_cantidad:
+                    sin_cambios_count += 1
+                    if sin_cambios_count >= 3:
+                        self.logger.info("✓ Sin cambios en 3 scrolls consecutivos - fin del scroll infinito")
+                        break
+                else:
+                    sin_cambios_count = 0
                 
-                # BUSCAR BOTÓN "PRÓXIMA" Y HACER CLICK
-                proximo_btn = None
-                botoes_proximo = [
-                    "a:has-text('Próxima')",
-                    "a:has-text('Proximo')",
-                    "button:has-text('Próxima')",
-                    "button:has-text('Proximo')",
-                    "a.proxima",
-                    "button.proxima",
-                    "a[href*='pagina']",
-                    ".paginacao a:last-child"
-                ]
+                ultima_cantidad = len(linhas)
                 
-                for btn_selector in botoes_proximo:
-                    try:
-                        proximo_btn = await self.page.query_selector(btn_selector)
-                        if proximo_btn:
-                            # Verificar si está deshabilitado
-                            disabled = await proximo_btn.get_attribute("disabled")
-                            if not disabled:
-                                self.logger.info(f"✓ Botón 'Próxima' encontrado: {btn_selector}")
-                                break
-                            else:
-                                proximo_btn = None
-                    except:
-                        continue
-                
-                # Si no hay botón "próxima" o está deshabilitado, salir
-                if not proximo_btn:
-                    self.logger.info("No hay más páginas (sin botón 'Próxima')")
-                    break
-                
-                # Hacer click en "Próxima"
+                # SCROLL DOWN para cargar más items
                 try:
-                    await proximo_btn.click()
-                    await asyncio.sleep(self.config.get("playwright", {}).get("wait_between_requests", 2))
-                    pagina_num += 1
+                    await self.page.evaluate("window.scrollBy(0, window.innerHeight);")
+                    wait_time = self.config.get("playwright", {}).get("wait_between_requests", 2)
+                    self.logger.info(f"  Scroll realizado, esperando {wait_time}s para cargar más...")
+                    await asyncio.sleep(wait_time)
                 except Exception as e:
-                    self.logger.warning(f"Error al hacer click en 'Próxima': {e}")
+                    self.logger.warning(f"Error al hacer scroll: {e}")
                     break
             
             self.logger.info(f"\n✓ Total de imóveles extraídos (todas las páginas): {len(imoveis)}")
@@ -1266,11 +1230,12 @@ class CaixaScraper:
                 if match:
                     bairro = match.group(1).strip()
             
-            # Link del imóvel (construir URL con ID)
-            # ⚠️ NOTA: Caixa requiere POST para ver detalles
-            # Guardamos solo el ID para que la web use POST
-            base_url = self.config.get("urls", {}).get("base_url", "https://venda-imoveis.caixa.gov.br")
-            link = f"{base_url}/sistema/venda-online/detalhe_imovel.asp?id={id_imovel}"
+            # Link del imóvel - Usar endpoint local que simula detalhe_imovel()
+            # Este endpoint genera un formulario con POST a Caixa
+            # En producción con web.py corriendo, usar: http://localhost:5000/link-imovel/<id>
+            # O si está en VPS: http://caixa.tecnofalls.com.br/link-imovel/<id>
+            base_url = self.config.get("urls", {}).get("web_base_url", "http://localhost:5000")
+            link = f"{base_url}/link-imovel/{id_imovel}"
             
             # Modalidad y ciudad
             busca_config = self.config.get("busca", {})
