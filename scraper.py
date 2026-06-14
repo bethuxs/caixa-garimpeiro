@@ -1003,15 +1003,15 @@ class CaixaScraper:
             await asyncio.sleep(3)
             await self.page.wait_for_load_state("domcontentloaded", timeout=timeout)
 
-            # ========== PASO 1: ESTADO, CIUDAD, MODALIDAD ==========
+            # ========== PASO 1: ESTADO ==========
             estado = busca_config.get("estado", "PR")
             self.logger.info(f"Selecionando estado: {estado}")
             
             await self.page.wait_for_selector(self.SELECTORS["estado"], timeout=timeout)
             await self.page.select_option(self.SELECTORS["estado"], estado)
-            await asyncio.sleep(1)  # Reemplazar wait_for_load_state("networkidle")
+            await asyncio.sleep(1)
             
-            # ========== CIUDADES ==========
+            # ========== CIUDADES - LOOP PRINCIPAL ==========
             cidades = busca_config.get("cidades", [])
             for cidade_info in cidades:
                 codigo = cidade_info.get("codigo")
@@ -1019,213 +1019,121 @@ class CaixaScraper:
                 if not codigo:
                     continue
                 
-                self.logger.info(f"Selecionando cidade: {nome} (código: {codigo})")
+                self.logger.info(f"\n{'='*60}")
+                self.logger.info(f"CIUDAD: {nome} (código: {codigo})")
+                self.logger.info(f"{'='*60}")
                 
                 try:
                     await self.page.select_option(self.SELECTORS["cidade"], str(codigo))
-                    await asyncio.sleep(1)  # Reemplazar wait_for_load_state("networkidle")
-                    
+                    await asyncio.sleep(1)
                 except Exception as e:
                     self.logger.warning(f"Erro ao selecionar cidade {nome}: {e}")
                     continue
 
-            # ========== MODALIDADES ==========
-            modalidades = busca_config.get("modalidades", [34])
-            
-            for modalidade in modalidades:
-                self.logger.info(f"Selecionando modalidade: {modalidade}")
+                # ========== MODALIDADES - LOOP ANIDADO ==========
+                modalidades = busca_config.get("modalidades", [34])
                 
-                try:
-                    await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
-                    await asyncio.sleep(0.5)
+                for mod_index, modalidade in enumerate(modalidades, 1):
+                    self.logger.info(f"\n[MODALIDADE {mod_index}/{len(modalidades)}] Processando modalidade: {modalidade}")
                     
-                except Exception as e:
-                    self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
-                    continue
-
-            await asyncio.sleep(1)
-
-            # ========== CLICK PRÓXIMO (Paso 1 -> 2) ==========
-            self.logger.info("Navegando al paso 2")
-            btn_next0 = await self.page.query_selector("#btn_next0")
-            if btn_next0:
-                await btn_next0.click()
-                await asyncio.sleep(2)
-            
-            # ========== PASO 2: Llenar con valores por defecto ==========
-            self.logger.info("Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
-            
-            # NO RELLENAR - Pasar el Paso 2 sin cambios para traer TODOS los resultados
-            # (según instrucción del usuario: guardar TODOS primero, luego aplicar filtros)
-            await asyncio.sleep(1)
-            
-            # CLICK PRÓXIMO (Paso 2 -> 3)
-            await asyncio.sleep(1)
-            btn_next1 = await self.page.query_selector("#btn_next1")
-            if btn_next1:
-                await btn_next1.click()
-                await asyncio.sleep(2)
-                
-                # ========== PASO 3: Rellenar dados del cliente ==========
-                self.logger.info("Paso 3: Rellenando datos del cliente")
-                
-                # Obtener CPF, Teléfono y Email del .env o configuración
-                cpf = os.getenv("CAIXA_CPF", "").strip()
-                telefone = os.getenv("CAIXA_TELEFONE", "").strip()
-                email = os.getenv("CAIXA_EMAIL", "").strip()
-                
-                # Rellenar CPF (formato: 000.000.000-00)
-                if cpf:
                     try:
-                        # Formatear CPF si es necesario
-                        cpf_clean = cpf.replace(".", "").replace("-", "")
-                        if len(cpf_clean) == 11:
-                            cpf_formatted = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:11]}"
-                        else:
-                            cpf_formatted = cpf
-                        
-                        cpf_field = await self.page.query_selector("#txtCPF")
-                        if cpf_field:
-                            await cpf_field.fill(cpf_formatted)
-                            self.logger.info(f"  ✓ CPF rellenado: {cpf_formatted}")
-                        else:
-                            self.logger.warning("  ⚠️  Campo #txtCPF no encontrado")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar CPF: {e}")
-                
-                # Rellenar Teléfono
-                if telefone:
-                    try:
-                        tel_field = await self.page.query_selector("#txtTelefone")
-                        if tel_field:
-                            await tel_field.fill(telefone)
-                            self.logger.info(f"  ✓ Teléfono rellenado: {telefone}")
-                        else:
-                            self.logger.warning("  ⚠️  Campo #txtTelefone no encontrado")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar Teléfono: {e}")
-                
-                # Rellenar Email
-                if email:
-                    try:
-                        email_field = await self.page.query_selector("#txtEmail")
-                        if email_field:
-                            await email_field.fill(email)
-                            self.logger.info(f"  ✓ Email rellenado: {email}")
-                        else:
-                            self.logger.warning("  ⚠️  Campo #txtEmail no encontrado")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar Email: {e}")
-                
-                # CLICK PRÓXIMO (Paso 3 -> 4)
-                await asyncio.sleep(1)
-                
-                # Remover overlay jQuery UI que bloquea clicks
-                try:
-                    await self.page.evaluate("""
-                    () => {
-                        const overlay = document.querySelector('.ui-widget-overlay');
-                        if (overlay) overlay.remove();
-                    }
-                    """)
-                except:
-                    pass
-                
-                # DEBUG: Verificar valores de formulario ANTES del clic
-                form_values = await self.page.evaluate(r"""
-                () => {
-                    return {
-                        cpf: document.getElementById('txtCPF')?.value || '',
-                        telefone: document.getElementById('txtTelefone')?.value || '',
-                        email: document.getElementById('txtEmail')?.value || '',
-                        cpf_length: (document.getElementById('txtCPF')?.value || '').length,
-                        telefone_length_numeric: (document.getElementById('txtTelefone')?.value || '').replace(/\D/g, '').length
-                    }
-                }
-                """)
-                self.logger.warning(f"⚠️  Form values before click: {form_values}")
-                
-                # DEBUG: Capturar alert() y errores del navegador
-                alert_messages = []
-                def on_dialog(dialog):
-                    alert_messages.append(f"[{dialog.type.upper()}] {dialog.message}")
-                    asyncio.create_task(dialog.dismiss())
-                
-                self.page.on("dialog", on_dialog)
-                
-                # DEBUG: Interceptar requests AJAX
-                ajax_requests = []
-                async def on_response(response):
-                    if 'busca' in response.url or 'resultado' in response.url.lower() or response.request.method in ['POST']:
-                        try:
-                            resp_text = await response.text()
-                            ajax_requests.append({
-                                'url': response.url,
-                                'method': response.request.method,
-                                'status': response.status,
-                                'response_length': len(resp_text),
-                                'response_preview': resp_text[:200] if resp_text else '(empty)'
-                            })
-                        except:
-                            ajax_requests.append({
-                                'url': response.url,
-                                'method': response.request.method,
-                                'status': response.status,
-                                'error': 'Could not read response'
-                            })
-                
-                self.page.on("response", on_response)
-                
-                btn_next2 = await self.page.query_selector("#btn_next2")
-                if btn_next2:
-                    await btn_next2.click()
-                    
-                    # Esperar a que aparezcan los resultados - verificar con query_selector_all
-                    for wait_attempt in range(20):  # Máximo 20 * 0.5 = 10 segundos
+                        await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
                         await asyncio.sleep(0.5)
-                        
-                        items = await self.page.query_selector_all("li.group-block-item")
-                        if items:
-                            self.logger.info(f"✓ Resultados cargados después de {wait_attempt * 0.5:.1f}s - {len(items)} items encontrados")
-                            break
+                    except Exception as e:
+                        self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
+                        continue
+
+                    await asyncio.sleep(1)
+
+                    # ========== CLICK PRÓXIMO (Paso 1 -> 2) ==========
+                    self.logger.info("  Navegando al paso 2...")
+                    btn_next0 = await self.page.query_selector("#btn_next0")
+                    if btn_next0:
+                        await btn_next0.click()
+                        await asyncio.sleep(2)
                     else:
-                        self.logger.warning("⚠️  Timeout esperando resultados (li.group-block-item)")
-                        
-                        if alert_messages:
-                            self.logger.warning(f"⚠️  Alerts capturados: {alert_messages}")
-                        
-                        if ajax_requests:
-                            self.logger.warning(f"⚠️  AJAX Requests interceptados: {ajax_requests}")
-                        else:
-                            self.logger.warning("⚠️  No AJAX requests interceptados")
-                        
-                        # DEBUG: Guardar HTML para ver qué está pasando
-                        html_content = await self.page.content()
-                        with open("/tmp/scraper_click_response.html", "w", encoding="utf-8") as f:
-                            f.write(html_content)
-                        self.logger.debug(f"HTML guardado en /tmp/scraper_click_response.html ({len(html_content)} bytes)")
-                        
-                        # DEBUG: Verificar si el clic realmente se ejecutó
-                        page_state = await self.page.evaluate("""
-                        () => {
-                            return {
-                                items_count: document.querySelectorAll('li.group-block-item').length,
-                                container: document.getElementById('listaimoveispaginacao') ? 'exists' : 'missing',
-                                listaimoveis_content: document.getElementById('listaimoveis')?.innerHTML?.substring(0, 100) || 'empty',
-                                has_errors: document.body.innerHTML.includes('Erro') || document.body.innerHTML.includes('error')
-                            }
-                        }
-                        """)
-                        self.logger.warning(f"⚠️  DOM State after click: {page_state}")
-            else:
-                self.logger.warning("Botón #btn_next1 no encontrado")
+                        self.logger.warning("  Botón #btn_next0 no encontrado")
+                        continue
             
-            # ========== ESPERAR A QUE LOS RESULTADOS CARGUEN ==========
-            self.logger.info("Esperando resultados...")
-            
-            # Los resultados ya deberían estar cargados después del clic
-            # Solo esperar un poco más
-            await asyncio.sleep(1)
+# ========== PASO 2: Sin filtros restrictivos ==========
+                    self.logger.info("  Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
+                    await asyncio.sleep(1)
+                    
+                    # CLICK PRÓXIMO (Paso 2 -> 3)
+                    await asyncio.sleep(1)
+                    btn_next1 = await self.page.query_selector("#btn_next1")
+                    if not btn_next1:
+                        self.logger.warning("  Botón #btn_next1 no encontrado")
+                        continue
+                        
+                    await btn_next1.click()
+                    await asyncio.sleep(2)
+                    
+                    # ========== PASO 3: Rellenar dados del cliente ==========
+                    self.logger.info("  Paso 3: Rellenando datos del cliente")
+                    
+                    # Obtener CPF, Teléfono y Email del .env
+                    cpf = os.getenv("CAIXA_CPF", "").strip()
+                    telefone = os.getenv("CAIXA_TELEFONE", "").strip()
+                    email = os.getenv("CAIXA_EMAIL", "").strip()
+                    
+                    # Rellenar CPF
+                    if cpf:
+                        try:
+                            cpf_clean = cpf.replace(".", "").replace("-", "")
+                            if len(cpf_clean) == 11:
+                                cpf_formatted = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:11]}"
+                            else:
+                                cpf_formatted = cpf
+                            
+                            cpf_field = await self.page.query_selector("#txtCPF")
+                            if cpf_field:
+                                await cpf_field.fill(cpf_formatted)
+                                self.logger.info(f"    ✓ CPF rellenado")
+                        except Exception as e:
+                            self.logger.warning(f"    Error rellenar CPF: {e}")
+                    
+                    # Rellenar Teléfono
+                    if telefone:
+                        try:
+                            tel_field = await self.page.query_selector("#txtTelefone")
+                            if tel_field:
+                                await tel_field.fill(telefone)
+                                self.logger.info(f"    ✓ Teléfono rellenado")
+                        except Exception as e:
+                            self.logger.warning(f"    Error rellenar teléfono: {e}")
+                    
+                    # Rellenar Email
+                    if email:
+                        try:
+                            email_field = await self.page.query_selector("#txtEmail")
+                            if email_field:
+                                await email_field.fill(email)
+                                self.logger.info(f"    ✓ Email rellenado")
+                        except Exception as e:
+                            self.logger.warning(f"    Error rellenar email: {e}")
+                    
+                    # Remover overlay
+                    await asyncio.sleep(1)
+                    try:
+                        await self.page.evaluate("() => { const o = document.querySelector('.ui-widget-overlay'); if (o) o.remove(); }")
+                    except:
+                        pass
+                    
+                    # CLICK ENVIAR (Paso 3 -> Resultados)
+                    btn_next2 = await self.page.query_selector("#btn_next2")
+                    if btn_next2:
+                        await btn_next2.click()
+                        
+                        # Esperar resultados
+                        for attempt in range(20):
+                            await asyncio.sleep(0.5)
+                            items = await self.page.query_selector_all("li.group-block-item")
+                            if items:
+                                self.logger.info(f"  ✓ Resultados cargados: {len(items)} items")
+                                break
+                    
+                    await asyncio.sleep(1)
 
         except Exception as e:
             self.logger.error(f"Erro ao preencher formulário: {e}")
