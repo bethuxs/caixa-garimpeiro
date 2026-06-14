@@ -824,205 +824,51 @@ class CaixaScraper:
 
     async def navegar_e_buscar(self) -> Union[List[Imovel], tuple]:
         """
-        Navega até o portal e executa a busca em TODAS as cidades configuradas.
-        Faz um loop por cidade, extraindo resultados de cada uma.
-
+        Navega hasta el portal y ejecuta la búsqueda en TODAS las ciudades y modalidades.
+        
+        La función _preencher_formulario_multistep() maneja el flujo completo:
+        - Loop por ciudades (del config)
+        - Loop por modalidades (del config)  
+        - Pasos 1, 2, 3 para CADA combinación ciudad-modalidade
+        - Extracción de resultados DESPUÉS de cada búsqueda
+        
         Returns:
-            Lista de imóveis encontrados em todas as cidades
+            Lista de imóveis encontrados en todas las ciudades y modalidades
         """
         imoveis_totales = []
-        busca_config = self.config.get("busca", {})
-        cidades = busca_config.get("cidades", [])
         
-        # Loop por cada cidade
-        for idx, cidade_info in enumerate(cidades):
-            codigo = cidade_info.get("codigo")
-            nome = cidade_info.get("nome")
-            
-            if not codigo:
-                continue
-            
-            self.logger.info(f"\n=== CIUDAD {idx+1}/{len(cidades)}: {nome} ===\n")
-            
-            try:
-                # Recargar página para cada ciudad
-                url_busca = self.config.get("urls", {}).get(
-                    "search_page",
-                    "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp"
-                )
-                
-                self.logger.info(f"Navegando para: {url_busca}")
-                await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
-                await asyncio.sleep(2)
-                
-                # Llenar formulario para esta ciudad específica
-                await self._preencher_formulario_multistep_ciudad(nome, codigo)
-                
-                # Aguardar resultados
-                await asyncio.sleep(self.config.get("playwright", {}).get("wait_between_requests", 2))
-                
-                # Extraer inmuebles (pasar ciudad actual)
-                imoveis_ciudad = await self._extrair_imoveis(cidade_atual=nome)
-                
-                self.logger.info(f"✓ Encontrados {len(imoveis_ciudad)} inmuebles en {nome}")
-                imoveis_totales.extend(imoveis_ciudad)
-                
-            except Exception as e:
-                self.logger.error(f"Error buscando en {nome}: {e}")
-                continue
-        
-        self.logger.info(f"\n=== TOTAL INMUEBLES EN TODAS CIUDADES: {len(imoveis_totales)} ===\n")
-        return imoveis_totales
-
-    async def _preencher_formulario_multistep_ciudad(self, cidade_nome: str, cidade_codigo: str) -> None:
-        """Preenche e submete o formulário multi-step de busca para UMA CIDADE específica."""
         try:
-            busca_config = self.config.get("busca", {})
-            playwright_config = self.config.get("playwright", {})
-            timeout = playwright_config.get("timeout", 30000)
-
-            # Aguarda JavaScript inicial
-            await asyncio.sleep(3)
-            await self.page.wait_for_load_state("domcontentloaded", timeout=timeout)
-
-            # ========== ESTADO ==========
-            estado = busca_config.get("estado", "PR")
-            self.logger.info(f"Selecionando estado: {estado}")
+            # Navegar a la página de búsqueda
+            url_busca = self.config.get("urls", {}).get(
+                "search_page",
+                "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp"
+            )
             
-            await self.page.wait_for_selector(self.SELECTORS["estado"], timeout=timeout)
-            await self.page.select_option(self.SELECTORS["estado"], estado)
-            await asyncio.sleep(1)
+            self.logger.info(f"\n{'='*70}")
+            self.logger.info(f"Iniciando búsqueda en: {url_busca}")
+            self.logger.info(f"{'='*70}\n")
             
-            # ========== CIUDAD ESPECÍFICA (Solo una) ==========
-            self.logger.info(f"Selecionando ciudad: {cidade_nome} (código: {cidade_codigo})")
+            await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(2)
             
-            try:
-                await self.page.select_option(self.SELECTORS["cidade"], str(cidade_codigo))
-                await asyncio.sleep(1)
-            except Exception as e:
-                self.logger.warning(f"Erro ao selecionar cidade {cidade_nome}: {e}")
-                return
-
-            # ========== MODALIDADES ==========
-            modalidades = busca_config.get("modalidades", [14])
+            # Preencher y buscar para TODAS las ciudades y modalidades
+            # (La función maneja todos los loops internamente)
+            await self._preencher_formulario_multistep()
             
-            for modalidade in modalidades:
-                self.logger.info(f"Selecionando modalidade: {modalidade}")
-                
-                try:
-                    await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
-                    await async_sleep_random(0.3, 0.8)
-                    
-                except Exception as e:
-                    self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
-                    continue
-
-            await asyncio.sleep(1)
-
-            # ========== CLICK PRÓXIMO (Paso 1 -> 2) ==========
-            self.logger.info("Navegando al paso 2")
-            btn_next0 = await self.page.query_selector("#btn_next0")
-            if btn_next0:
-                await btn_next0.click()
-                await asyncio.sleep(2)
+            # Extraer inmuebles (sin parámetro ciudad_atual, trae TODO)
+            imoveis_totales = await self._extrair_imoveis()
             
-            # ========== PASO 2: Sin filtros restrictivos ==========
-            self.logger.info("Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
+            self.logger.info(f"\n{'='*70}")
+            self.logger.info(f"✓ BÚSQUEDA COMPLETADA: {len(imoveis_totales)} inmuebles encontrados")
+            self.logger.info(f"{'='*70}\n")
             
-            # NO RELLENAR - Pasar el Paso 2 sin cambios para traer TODOS los resultados
-            await asyncio.sleep(1)
-            
-            # CLICK PRÓXIMO (Paso 2 -> 3)
-            await asyncio.sleep(1)
-            btn_next1 = await self.page.query_selector("#btn_next1")
-            if btn_next1:
-                await btn_next1.click()
-                await asyncio.sleep(2)
-                
-                # ========== PASO 3: Rellenar datos del cliente ==========
-                self.logger.info("Paso 3: Rellenando datos del cliente")
-                
-                # Obtener CPF, Teléfono y Email del .env
-                cpf = __import__('os').getenv("CAIXA_CPF", "").strip()
-                telefone = __import__('os').getenv("CAIXA_TELEFONE", "").strip()
-                email = __import__('os').getenv("CAIXA_EMAIL", "").strip()
-                
-                # Rellenar CPF (formato: 000.000.000-00)
-                if cpf:
-                    try:
-                        cpf_clean = cpf.replace(".", "").replace("-", "")
-                        if len(cpf_clean) == 11:
-                            cpf_formatted = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:11]}"
-                        else:
-                            cpf_formatted = cpf
-                        
-                        cpf_field = await self.page.query_selector("#txtCPF")
-                        if cpf_field:
-                            await cpf_field.fill(cpf_formatted)
-                            self.logger.info(f"  ✓ CPF rellenado: {cpf_formatted}")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar CPF: {e}")
-                
-                # Rellenar Teléfono
-                if telefone:
-                    try:
-                        tel_field = await self.page.query_selector("#txtTelefone")
-                        if tel_field:
-                            await tel_field.fill(telefone)
-                            self.logger.info(f"  ✓ Teléfono rellenado: {telefone}")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar teléfono: {e}")
-                
-                # Rellenar Email
-                if email:
-                    try:
-                        email_field = await self.page.query_selector("#txtEmail")
-                        if email_field:
-                            await email_field.fill(email)
-                            self.logger.info(f"  ✓ Email rellenado: {email}")
-                    except Exception as e:
-                        self.logger.warning(f"  Error al rellenar email: {e}")
-                
-                # Validar datos del formulario
-                form_values = await self.page.evaluate(r"""
-                    () => ({
-                        cpf: document.querySelector('#txtCPF').value,
-                        telefone: document.querySelector('#txtTelefone').value,
-                        email: document.querySelector('#txtEmail').value,
-                        cpf_length: document.querySelector('#txtCPF').value.length,
-                        telefone_length_numeric: document.querySelector('#txtTelefone').value.replace(/\D/g, '').length,
-                    })
-                """)
-                
-                self.logger.warning(f"⚠️  Form values before click: {form_values}")
-                
-                # Remover overlay
-                await asyncio.sleep(2)
-                await self.page.evaluate("() => { const overlay = document.querySelector('.ui-widget-overlay'); if (overlay) overlay.remove(); }")
-                
-                # CLICK ENVIAR (Paso 3 -> Resultados vía AJAX)
-                btn_next2 = await self.page.query_selector("#btn_next2")
-                if btn_next2:
-                    await btn_next2.click()
-                    
-                    # Esperar a que se carguen los resultados
-                    for attempt in range(20):
-                        items = await self.page.query_selector_all("li.group-block-item")
-                        if items:
-                            self.logger.info(f"✓ Resultados cargados después de {attempt*0.5}s - {len(items)} items encontrados")
-                            break
-                        await asyncio.sleep(0.5)
-                    
-                    await asyncio.sleep(1)
-        
         except Exception as e:
-            self.logger.error(f"Error en _preencher_formulario_multistep_ciudad: {e}")
+            self.logger.error(f"Error en búsqueda general: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
+        
+        return imoveis_totales
 
-    async def _preencher_formulario_multistep(self) -> None:
-        """Función legacy - deprecated. Usar _preencher_formulario_multistep_ciudad()"""
-        pass
 
     async def _preencher_formulario_multistep(self) -> None:
         """Preenche e submete o formulário multi-step de busca da Caixa."""
