@@ -74,20 +74,20 @@ def index():
         cursor = conn.cursor()
         
         # Total de imóveis
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis")
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE activo = 1")
         total = cursor.fetchone()["total"]
         
         # Total da última semana
         data_semana = (datetime.now() - timedelta(days=7)).isoformat()
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ?", (data_semana,))
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ? AND activo = 1", (data_semana,))
         semana = cursor.fetchone()["total"]
         
         # Preço médio
-        cursor.execute("SELECT AVG(preco) as media FROM imoveis")
+        cursor.execute("SELECT AVG(preco) as media FROM imoveis WHERE activo = 1")
         media = cursor.fetchone()["media"] or 0
         
         # Bairros únicos
-        cursor.execute("SELECT COUNT(DISTINCT bairro) as total FROM imoveis")
+        cursor.execute("SELECT COUNT(DISTINCT bairro) as total FROM imoveis WHERE activo = 1")
         bairros = cursor.fetchone()["total"]
         
         conn.close()
@@ -120,8 +120,8 @@ def api_imoveis():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Query base
-        query = "SELECT * FROM imoveis WHERE preco >= ? AND preco <= ?"
+        # Query base - SOLO INMUEBLES ACTIVOS
+        query = "SELECT * FROM imoveis WHERE activo = 1 AND preco >= ? AND preco <= ?"
         params = [preco_min, preco_max]
         
         # Filtro por ciudad
@@ -191,7 +191,7 @@ def api_estatisticas():
         cursor = conn.cursor()
         
         # Total de imóveis
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis")
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE activo = 1")
         total = cursor.fetchone()["total"]
         
         # Por período
@@ -199,23 +199,24 @@ def api_estatisticas():
         data_semana = (datetime.now() - timedelta(days=7)).isoformat()
         data_mes = (datetime.now() - timedelta(days=30)).isoformat()
         
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ?", (data_hoje,))
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ? AND activo = 1", (data_hoje,))
         hoje = cursor.fetchone()["total"]
         
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ?", (data_semana,))
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ? AND activo = 1", (data_semana,))
         semana = cursor.fetchone()["total"]
         
-        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ?", (data_mes,))
+        cursor.execute("SELECT COUNT(*) as total FROM imoveis WHERE data_insercao > ? AND activo = 1", (data_mes,))
         mes = cursor.fetchone()["total"]
         
         # Preços
-        cursor.execute("SELECT AVG(preco) as media, MIN(preco) as minimo, MAX(preco) as maximo FROM imoveis")
+        cursor.execute("SELECT AVG(preco) as media, MIN(preco) as minimo, MAX(preco) as maximo FROM imoveis WHERE activo = 1")
         precos = cursor.fetchone()
         
         # Bairros
         cursor.execute("""
             SELECT bairro, COUNT(*) as total 
             FROM imoveis 
+            WHERE activo = 1
             GROUP BY bairro 
             ORDER BY total DESC 
             LIMIT 10
@@ -226,6 +227,7 @@ def api_estatisticas():
         cursor.execute("""
             SELECT cidade, COUNT(*) as total 
             FROM imoveis 
+            WHERE activo = 1
             GROUP BY cidade 
             ORDER BY total DESC
         """)
@@ -235,6 +237,7 @@ def api_estatisticas():
         cursor.execute("""
             SELECT modalidade, COUNT(*) as total 
             FROM imoveis 
+            WHERE activo = 1
             GROUP BY modalidade
         """)
         modalidades = [{"modalidade": row["modalidade"], "total": row["total"]} for row in cursor.fetchall()]
@@ -272,7 +275,7 @@ def api_bairros():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT bairro FROM imoveis ORDER BY bairro")
+        cursor.execute("SELECT DISTINCT bairro FROM imoveis WHERE activo = 1 ORDER BY bairro")
         bairros = [row["bairro"] for row in cursor.fetchall()]
         conn.close()
         
@@ -291,7 +294,7 @@ def api_cidades():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT cidade FROM imoveis ORDER BY cidade")
+        cursor.execute("SELECT DISTINCT cidade FROM imoveis WHERE activo = 1 ORDER BY cidade")
         cidades = [row["cidade"] for row in cursor.fetchall()]
         conn.close()
         
@@ -310,7 +313,7 @@ def api_imovel_detalhe(id_imovel):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ?", (id_imovel,))
+        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ? AND activo = 1", (id_imovel,))
         imovel = cursor.fetchone()
         conn.close()
         

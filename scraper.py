@@ -184,7 +184,9 @@ class Database:
                     modalidade TEXT,
                     cidade TEXT,
                     data_captura TIMESTAMP NOT NULL,
-                    data_insercao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    data_insercao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    data_actualizacion TIMESTAMP,
+                    activo INTEGER DEFAULT 1
                 )
             """)
             
@@ -197,6 +199,27 @@ class Database:
             """)
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_data_insercao ON imoveis(data_insercao)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_activo ON imoveis(activo)
+            """)
+            
+            # Tabla de historial de cambios en imóveis
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS imoveis_historial (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id_imovel TEXT NOT NULL,
+                    campo TEXT NOT NULL,
+                    valor_anterior TEXT,
+                    valor_nuevo TEXT,
+                    fecha_cambio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tipo_cambio TEXT,
+                    FOREIGN KEY (id_imovel) REFERENCES imoveis(id_imovel)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_historial_imovel ON imoveis_historial(id_imovel)
             """)
             
             conn.commit()
@@ -224,6 +247,7 @@ class Database:
     def inserir_imovel(self, imovel: Imovel) -> bool:
         """
         Insere um novo imóvel no banco de dados.
+        Si ya existe pero estaba inactivo, lo reactiva.
 
         Args:
             imovel: Objeto Imovel a ser inserido
@@ -234,11 +258,35 @@ class Database:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                
+                # Verificar si ya existe
+                cursor.execute("SELECT activo FROM imoveis WHERE id_imovel = ?", (imovel.id_imovel,))
+                resultado = cursor.fetchone()
+                
+                if resultado:
+                    # Ya existe
+                    activo = resultado[0]
+                    if not activo:
+                        # Estaba inactivo, reactivar y actualizar
+                        cursor.execute("""
+                            UPDATE imoveis 
+                            SET preco = ?, bairro = ?, descricao = ?, 
+                                modalidade = ?, data_actualizacion = ?, activo = 1
+                            WHERE id_imovel = ?
+                        """, (
+                            imovel.preco, imovel.bairro, imovel.descricao,
+                            imovel.modalidade, datetime.now().isoformat(), imovel.id_imovel
+                        ))
+                        self.registrar_cambio(imovel.id_imovel, "activo", 0, 1, "REACTIVACION")
+                        self.logger.info(f"Imóvel reactivado: {imovel.id_imovel}")
+                    return False  # No es nuevo, devolver False
+                
+                # Es nuevo, insertar
                 cursor.execute("""
                     INSERT INTO imoveis (
                         id_imovel, codigo, bairro, preco, descricao, 
-                        link, modalidade, cidade, data_captura
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        link, modalidade, cidade, data_captura, activo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """, (
                     imovel.id_imovel,
                     imovel.codigo,
@@ -259,6 +307,177 @@ class Database:
         except sqlite3.Error as e:
             self.logger.error(f"Erro ao inserir imóvel: {e}")
             return False
+
+    def registrar_cambio(self, id_imovel: str, campo: str, valor_anterior: Any, valor_nuevo: Any, tipo_cambio: str = "UPDATE") -> bool:
+        """
+        Registra un cambio en el historial de un inmueble.
+
+        Args:
+            id_imovel: ID del inmueble
+            campo: Campo que cambió (ej: "preco", "modalidade")
+            valor_anterior: Valor antes del cambio
+            valor_nuevo: Valor después del cambio
+            tipo_cambio: Tipo de cambio ("UPDATE", "REACTIVACION", etc.)
+
+        Returns:
+            True si se registró con suceso
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO imoveis_historial (id_imovel, campo, valor_anterior, valor_nuevo, tipo_cambio)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (id_imovel, campo, str(valor_anterior), str(valor_nuevo), tipo_cambio))
+                conn.commit()
+                self.logger.info(f"Cambio registrado para {id_imovel}: {campo} ({valor_anterior} → {valor_nuevo})")
+                return True
+        except sqlite3.Error as e:
+            self.logger.error(f"Error al registrar cambio: {e}")
+            return False
+
+    def actualizar_imovel(self, imovel: Imovel) -> Tuple[bool, List[str]]:
+        """
+        Actualiza un inmueble existente si sus datos cambiaron.
+
+        Args:
+            imovel: Objeto Imovel con datos nuevos
+
+        Returns:
+            (True si se actualizó, Lista de campos que cambiaron)
+        """
+        campos_cambios = []
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Obtener inmueble actual
+                cursor.execute("""
+                    SELECT preco, modalidade, bairro, descricao, activo 
+                    FROM imoveis WHERE id_imovel = ?
+                """, (imovel.id_imovel,))
+                
+                resultado = cursor.fetchone()
+                if not resultado:
+                    self.logger.warning(f"Inmueble {imovel.id_imovel} no encontrado para actualizar")
+                    return False, []
+                
+                preco_anterior, modalidade_anterior, bairro_anterior, desc_anterior, activo = resultado
+                
+                # Detectar cambios
+                if float(preco_anterior) != imovel.preco:
+                    campos_cambios.append(f"preco: {preco_anterior} → {imovel.preco}")
+                    self.registrar_cambio(imovel.id_imovel, "preco", preco_anterior, imovel.preco)
+                
+                if modalidade_anterior != imovel.modalidade:
+                    campos_cambios.append(f"modalidade: {modalidade_anterior} → {imovel.modalidade}")
+                    self.registrar_cambio(imovel.id_imovel, "modalidade", modalidade_anterior, imovel.modalidade)
+                
+                if bairro_anterior != imovel.bairro:
+                    campos_cambios.append(f"bairro: {bairro_anterior} → {imovel.bairro}")
+                    self.registrar_cambio(imovel.id_imovel, "bairro", bairro_anterior, imovel.bairro)
+                
+                if desc_anterior != imovel.descricao:
+                    campos_cambios.append("descricao: ACTUALIZADA")
+                    self.registrar_cambio(imovel.id_imovel, "descricao", desc_anterior[:50] if desc_anterior else "", imovel.descricao[:50] if imovel.descricao else "")
+                
+                # Si estaba inactivo, reactivar
+                if not activo:
+                    campos_cambios.append("REACTIVADO (estaba inactivo)")
+                    self.registrar_cambio(imovel.id_imovel, "activo", 0, 1, "REACTIVACION")
+                
+                # Si hay cambios, actualizar
+                if campos_cambios:
+                    cursor.execute("""
+                        UPDATE imoveis 
+                        SET preco = ?, modalidade = ?, bairro = ?, descricao = ?, 
+                            data_actualizacion = ?, activo = 1
+                        WHERE id_imovel = ?
+                    """, (
+                        imovel.preco,
+                        imovel.modalidade,
+                        imovel.bairro,
+                        imovel.descricao,
+                        datetime.now().isoformat(),
+                        imovel.id_imovel
+                    ))
+                    
+                    conn.commit()
+                    self.logger.info(f"Inmueble {imovel.id_imovel} actualizado: {', '.join(campos_cambios)}")
+                    return True, campos_cambios
+                
+                # Sin cambios, solo reactivar si está inactivo
+                if not activo:
+                    cursor.execute("""
+                        UPDATE imoveis SET activo = 1, data_actualizacion = ?
+                        WHERE id_imovel = ?
+                    """, (datetime.now().isoformat(), imovel.id_imovel))
+                    conn.commit()
+                    return True, ["REACTIVADO"]
+                
+                return False, []
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Error al actualizar inmueble: {e}")
+            return False, []
+
+    def soft_delete_inactivos(self, ids_activos: List[str]) -> int:
+        """
+        Marca como inactivos los inmuebles que NO están en la lista de IDs activos.
+        (Soft delete - mantiene el historial)
+
+        Args:
+            ids_activos: Lista de IDs de inmuebles encontrados en esta búsqueda
+
+        Returns:
+            Número de inmuebles marcados como inactivos
+        """
+        if not ids_activos:
+            self.logger.warning("No hay IDs activos para comparación")
+            return 0
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Obtener inmuebles que ANTES estaban activos
+                placeholders = ",".join("?" * len(ids_activos))
+                cursor.execute(f"""
+                    SELECT id_imovel FROM imoveis 
+                    WHERE activo = 1 AND id_imovel NOT IN ({placeholders})
+                """, ids_activos)
+                
+                inactivos = [row[0] for row in cursor.fetchall()]
+                
+                if inactivos:
+                    # Marcar como inactivos
+                    placeholders_in = ",".join("?" * len(inactivos))
+                    cursor.execute(f"""
+                        UPDATE imoveis 
+                        SET activo = 0, data_actualizacion = ?
+                        WHERE id_imovel IN ({placeholders_in})
+                    """, [datetime.now().isoformat()] + inactivos)
+                    
+                    conn.commit()
+                    
+                    # Registrar cambios
+                    for id_im in inactivos:
+                        self.registrar_cambio(id_im, "activo", 1, 0, "SOFT_DELETE")
+                    
+                    self.logger.info(f"✓ {len(inactivos)} inmuebles marcados como INACTIVOS (no encontrados en búsqueda)")
+                    for id_im in inactivos[:5]:  # Mostrar primeros 5
+                        self.logger.debug(f"  - {id_im}")
+                    if len(inactivos) > 5:
+                        self.logger.debug(f"  ... y {len(inactivos) - 5} más")
+                    
+                    return len(inactivos)
+                
+                return 0
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Error al marcar inactivos: {e}")
+            return 0
 
     def limpar_antigos(self, dias: int = 90) -> int:
         """
@@ -1339,27 +1558,33 @@ class CaixaScraper:
         self.logger.info(f"Imóveis após filtros: {len(imoveis_filtrados)} de {len(imoveis)}")
         return imoveis_filtrados
 
-    async def processar_resultados(self, imoveis: List[Imovel]) -> Tuple[int, int]:
+    async def processar_resultados(self, imoveis: List[Imovel]) -> Tuple[int, int, List[str]]:
         """
-        Processa resultados: filtra, verifica duplicidade e envia alertas.
+        Processa resultados: filtra, verifica duplicidad, actualiza cambios e envia alertas.
 
         Args:
             imoveis: Lista de imóveis brutos da página
 
         Returns:
-            Tupla (novos_imoveis, alertas_enviados)
+            Tupla (novos_imoveis, alertas_enviados, ids_encontrados)
         """
-        # PRIMERO: Guardar TODOS los imobles sin aplicar filtros
+        # PRIMERO: Guardar/actualizar TODOS los inmuebles
         novos_count = 0
         alertas_count = 0
+        ids_encontrados = []
         
         for imovel in imoveis:
+            ids_encontrados.append(imovel.id_imovel)
+            
             # Verifica si ya fue procesado
             if self.db.imovel_existe(imovel.id_imovel):
-                self.logger.debug(f"Imóvel ya procesado (saltando): {imovel.id_imovel}")
+                # Ya existe - intentar actualizar
+                atualizado, cambios = self.db.actualizar_imovel(imovel)
+                if atualizado and cambios:
+                    self.logger.info(f"✓ Actualizado: {imovel.id_imovel} - {', '.join(cambios)}")
                 continue
 
-            # GUARDAR en BD sin aplicar filtros (guardar TODOS)
+            # Es nuevo - GUARDAR en BD sin aplicar filtros (guardar TODOS)
             if self.db.inserir_imovel(imovel):
                 novos_count += 1
                 self.logger.info(f"✓ Guardado en BD: {imovel.bairro}, R$ {imovel.preco}")
@@ -1368,11 +1593,13 @@ class CaixaScraper:
         imoveis_filtrados = self._aplicar_filtros(imoveis)
         
         # Enviar alertas solo para los que pasan filtros
-        for imovel in imoveis_filtrados:
-            if self.telegram.enviar_alerta_imovel(imovel):
-                alertas_count += 1
+        if self.telegram:
+            for imovel in imoveis_filtrados:
+                if self.db.imovel_existe(imovel.id_imovel):  # Solo alertar los que están en BD
+                    if self.telegram.enviar_alerta_imovel(imovel):
+                        alertas_count += 1
 
-        return novos_count, alertas_count
+        return novos_count, alertas_count, ids_encontrados
 
     async def executar(self) -> Dict[str, Any]:
         """
@@ -1402,10 +1629,15 @@ class CaixaScraper:
             
             if imoveis:
                 # Processa resultados
-                novos, alertas = await self.processar_resultados(imoveis)
+                novos, alertas, ids_encontrados = await self.processar_resultados(imoveis)
                 resultado["imoveis_filtrados"] = len(self._aplicar_filtros(imoveis))
                 resultado["novos_imoveis"] = novos
                 resultado["alertas_enviados"] = alertas
+                
+                # SOFT DELETE: Marcar como inactivos los que NO fueron encontrados
+                if ids_encontrados:
+                    inativados = self.db.soft_delete_inactivos(ids_encontrados)
+                    resultado["imoveis_inativados"] = inativados
             
             # Limpeza de dados antigos
             dias_cleanup = self.config.get("database", {}).get("cleanup_days", 90)
