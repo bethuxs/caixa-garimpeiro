@@ -1285,8 +1285,15 @@ class CaixaScraper:
                 titulo_completo = await title_elem.text_content()
                 titulo_completo = titulo_completo.strip()
 
+            titulo_localizacao = titulo_completo
+            preco_titulo_texto = ""
+            if "|" in titulo_completo:
+                partes_titulo = titulo_completo.split("|", 1)
+                titulo_localizacao = partes_titulo[0].strip()
+                preco_titulo_texto = partes_titulo[1].strip()
+
             cidade_titulo, bairro_titulo = self._parse_titulo_localizacao(
-                titulo_completo,
+                titulo_localizacao,
                 cidade_fallback=cidade_atual
             )
 
@@ -1308,6 +1315,9 @@ class CaixaScraper:
 
                 desc_lines.append(font_text)
 
+            if not preco_texto and preco_titulo_texto:
+                preco_texto = preco_titulo_texto
+
             preco = self._extrair_preco(preco_texto) if preco_texto else 0.0
             if preco == 0.0:
                 self.logger.debug(f"Preço não extraído para ID {id_imovel}; texto='{preco_texto[:80]}'")
@@ -1323,7 +1333,7 @@ class CaixaScraper:
             
             modalidade = modalidade_atual or ""
             cidade = cidade_titulo or cidade_atual
-            bairro = bairro_titulo or titulo_completo
+            bairro = bairro_titulo or titulo_localizacao
             
             # Crear objeto Imovel
             imovel = Imovel(

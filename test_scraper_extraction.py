@@ -108,6 +108,25 @@ class TestScraperExtraction(unittest.TestCase):
         self.assertEqual(imovel.bairro, "EDIFÍCIO ZURIQUE")
         self.assertAlmostEqual(imovel.preco, 1370000.00)
 
+    def test_extrai_preco_quando_titulo_tem_pipe(self):
+        listing = FakeListing(
+            id_imovel="10145069",
+            titulo="ABRANCHES | R$ 730.000,00",
+            preco_texto="",
+            descricao="Casa - Leilão SFI - Edital Único\nNúmero do imóvel: 000001014506-9",
+        )
+
+        imovel = self.extract(
+            listing,
+            cidade="Curitiba",
+            modalidade="Leilão SFI - Edital Único",
+        )
+
+        self.assertEqual(imovel.cidade, "Curitiba")
+        self.assertEqual(imovel.bairro, "ABRANCHES")
+        self.assertEqual(imovel.modalidade, "Leilão SFI - Edital Único")
+        self.assertAlmostEqual(imovel.preco, 730000.00)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
