@@ -62,8 +62,12 @@ cp .env.example .env
 Edite o arquivo `.env` e preenchha com seus dados:
 
 ```env
-# Combine TOKEN e CHAT_ID do Telegram em uma única variável (formato: token:chat_id)
-TELEGRAM_CREDENTIALS=seu_token_aqui_do_botfather:seu_chat_id_pessoal
+# Telegram
+TELEGRAM_TOKEN=seu_token_aqui_do_botfather
+TELEGRAM_CHAT_ID=seu_chat_id_pessoal
+
+# Segurança da API web (obrigatório para POST /api/sincronizar)
+SYNC_API_TOKEN=gere_um_token_longo_e_secreto
 
 # Opcional
 DEBUG=false
@@ -485,6 +489,16 @@ playwright:
 - **`config.yaml`**: Parâmetros de busca e filtros que mudam frequentemente
 - **Código**: Defaults que raramente mudam
 
+**Variáveis importantes:**
+
+| Variável | Uso |
+|---|---|
+| `TELEGRAM_TOKEN` | Token do bot Telegram |
+| `TELEGRAM_CHAT_ID` | Chat que recebe alertas |
+| `SYNC_API_TOKEN` | Token Bearer obrigatório para `POST /api/sincronizar` |
+| `CORS_ORIGINS` | Opcional; origens CORS permitidas, separadas por vírgula |
+| `SECRET_KEY` | Opcional; chave do Flask |
+
 **Exemplo: Override via .env**
 
 Se você quer temporariamente mudar o nível de log sem editar `config.yaml`:
@@ -497,6 +511,21 @@ python scraper.py
 # Ou em .env (permanente)
 DEBUG=true
 ```
+
+---
+
+### Segurança da API Web
+
+O dashboard e APIs de leitura ficam públicos. A escrita remota em `/api/sincronizar`
+exige:
+
+```http
+Authorization: Bearer <SYNC_API_TOKEN>
+```
+
+Sem `SYNC_API_TOKEN` configurado no servidor, o endpoint retorna `503`. Com token
+ausente ou inválido, retorna `401`. O endpoint `/debug/link-imovel/<id>` só fica
+disponível quando `FLASK_DEBUG=true`.
 
 ---
 
@@ -634,8 +663,8 @@ SELECTORS = {
 - Campo de preço vazio no HTML
 
 ### "Mensagens não chegam no Telegram"
-- Verificar TOKEN e CHAT_ID em `.env`
-- Executar: `python -c "from scraper import TelegramNotifier; TelegramNotifier('token', 'id').enviar_teste()"`
+- Verificar `TELEGRAM_TOKEN` e `TELEGRAM_CHAT_ID` em `.env`
+- Executar: `make test-telegram`
 - Verificar se Bot não foi banido
 
 ### "Erro: SQLite database is locked"

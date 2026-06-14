@@ -9,6 +9,7 @@
 
 # Banco de dados (gerado localmente)
 *.db
+*.db.backup.*
 *.sqlite
 *.sqlite3
 

@@ -15,14 +15,16 @@ Dependências:
     - Flask-CORS>=4.0.0
 """
 
+import hmac
 import os
 import sqlite3
 import json
 from datetime import datetime, timedelta
 from functools import wraps
+from html import escape
 from pathlib import Path
 
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, abort, render_template, request, jsonify, session
 from flask_cors import CORS
 
 # ============================================================================
@@ -30,13 +32,20 @@ from flask_cors import CORS
 # ============================================================================
 
 DATABASE_PATH = os.getenv("DB_PATH", "database.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "seu_secret_key_aqui_mude_em_producao")
+SECRET_KEY = os.getenv("SECRET_KEY") or os.urandom(32).hex()
 DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+SYNC_API_TOKEN = os.getenv("SYNC_API_TOKEN", "").strip()
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["JSON_SORT_KEYS"] = False
-CORS(app)
+if CORS_ORIGINS:
+    CORS(app, origins=CORS_ORIGINS)
 
 # ============================================================================
 # FUNÇÕES AUXILIARES
@@ -61,6 +70,30 @@ def format_date(date_string):
         return dt.strftime("%d/%m/%Y %H:%M:%S")
     except:
         return date_string
+
+
+def html_attr(value):
+    """Escapa valores usados dentro de HTML generado manualmente."""
+    return escape(str(value or ""), quote=True)
+
+
+def validar_sync_token():
+    """Valida el token Bearer requerido para escritura remota."""
+    if not SYNC_API_TOKEN:
+        return jsonify({
+            "sucesso": False,
+            "erro": "SYNC_API_TOKEN não configurado no servidor"
+        }), 503
+
+    auth_header = request.headers.get("Authorization", "")
+    expected = f"Bearer {SYNC_API_TOKEN}"
+    if not hmac.compare_digest(auth_header, expected):
+        return jsonify({
+            "sucesso": False,
+            "erro": "Não autorizado"
+        }), 401
+
+    return None
 
 
 # ============================================================================
@@ -408,6 +441,10 @@ def link_imovel(id_imovel):
         # Convertir row a diccionario usando cursor.description
         cols_names = [description[0] for description in cursor.description]
         imovel = dict(zip(cols_names, row))
+        safe_id = html_attr(imovel.get("id_imovel", id_imovel))
+        safe_cidade = html_attr(imovel.get("cidade", ""))
+        safe_modalidade = html_attr(imovel.get("modalidade", ""))
+        safe_preco = html_attr(imovel.get("preco", ""))
         
         # Retornar HTML con formulario auto-submit que simula detalhe_imovel()
         html = f"""
@@ -428,22 +465,22 @@ def link_imovel(id_imovel):
         <body>
             <div class="container">
                 <h1>🔄 Carregando detalhes...</h1>
-                <p>Redirecionando para a página de detalhes do imóvel {id_imovel}</p>
+                <p>Redirecionando para a página de detalhes do imóvel {safe_id}</p>
                 <div class="spinner"></div>
                 <p style="font-size: 12px; color: #999; margin-top: 30px;">Se não for redirecionado automaticamente, <a href="#" onclick="document.getElementById('frmlista').submit(); return false;">clique aqui</a></p>
             </div>
             
             <form id="frmlista" method="POST" action="https://venda-imoveis.caixa.gov.br/sistema/venda-online/detalhe-imovel.asp" style="display:none;">
-                <input type="hidden" id="hdnimovel" name="hdnimovel" value="{imovel.get('id_imovel', id_imovel)}">
+                <input type="hidden" id="hdnimovel" name="hdnimovel" value="{safe_id}">
                 <input type="hidden" id="hdn_estado" name="hdn_estado" value="PR">
-                <input type="hidden" id="hdn_cidade" name="hdn_cidade" value="{imovel.get('cidade', '')}">
-                <input type="hidden" id="hdn_modalidade" name="hdn_modalidade" value="{imovel.get('modalidade', '')}">
+                <input type="hidden" id="hdn_cidade" name="hdn_cidade" value="{safe_cidade}">
+                <input type="hidden" id="hdn_modalidade" name="hdn_modalidade" value="{safe_modalidade}">
                 <input type="hidden" id="hdn_tp_imovel" name="hdn_tp_imovel" value="">
                 <input type="hidden" id="hdn_quartos" name="hdn_quartos" value="">
                 <input type="hidden" id="hdn_vg_garagem" name="hdn_vg_garagem" value="">
                 <input type="hidden" id="hdn_area_util" name="hdn_area_util" value="">
                 <input type="hidden" id="hdn_faixa_vlr" name="hdn_faixa_vlr" value="">
-                <input type="hidden" id="hdn_vlr_maximo" name="hdn_vlr_maximo" value="{imovel.get('preco', '')}">
+                <input type="hidden" id="hdn_vlr_maximo" name="hdn_vlr_maximo" value="{safe_preco}">
                 <input type="hidden" id="hdnValorSimulador" name="hdnValorSimulador" value="">
                 <input type="hidden" id="hdnAceitaFGTS" name="hdnAceitaFGTS" value="">
                 <input type="hidden" id="hdnAceitaFinanciamento" name="hdnAceitaFinanciamento" value="">
@@ -489,6 +526,9 @@ def debug_link_imovel(id_imovel):
     Endpoint de debug: Muestra los datos del formulario SIN auto-submit
     para verificar que los valores se están rellenando correctamente.
     """
+    if not DEBUG:
+        abort(404)
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -593,6 +633,10 @@ def api_sincronizar():
     }
     """
     try:
+        auth_error = validar_sync_token()
+        if auth_error:
+            return auth_error
+
         data = request.get_json()
         
         if not data or "imoveis" not in data:

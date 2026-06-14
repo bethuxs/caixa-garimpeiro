@@ -164,8 +164,6 @@ class CaixaConfig:
     def _validate(self) -> None:
         """Valida configurações obrigatórias."""
         # Telegram é opcional - será validado durante startup se configurado
-        # if not os.getenv("TELEGRAM_CREDENTIALS"):
-        #     raise ValueError("TELEGRAM_CREDENTIALS não definido nas variáveis de ambiente")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Obtém valor de configuração."""
@@ -468,19 +466,27 @@ class Database:
             self.logger.error(f"Error al actualizar inmueble: {e}")
             return False, []
 
-    def soft_delete_inactivos(self, ids_activos: List[str]) -> int:
+    def soft_delete_inactivos(
+        self,
+        ids_activos: List[str],
+        cidade: Optional[str] = None,
+        modalidade: Optional[str] = None
+    ) -> int:
         """
         Marca como inactivos los inmuebles que NO están en la lista de IDs activos.
+        Si se informa cidade/modalidade, la comparación queda limitada a ese alcance.
         (Soft delete - mantiene el historial)
 
         Args:
             ids_activos: Lista de IDs de inmuebles encontrados en esta búsqueda
+            cidade: Ciudad de la búsqueda completada
+            modalidade: Modalidad de la búsqueda completada
 
         Returns:
             Número de inmuebles marcados como inactivos
         """
-        if not ids_activos:
-            self.logger.warning("No hay IDs activos para comparación")
+        if not ids_activos and not (cidade or modalidade):
+            self.logger.warning("No hay IDs activos ni alcance para comparación")
             return 0
         
         try:
@@ -488,11 +494,21 @@ class Database:
                 cursor = conn.cursor()
                 
                 # Obtener inmuebles que ANTES estaban activos
-                placeholders = ",".join("?" * len(ids_activos))
-                cursor.execute(f"""
-                    SELECT id_imovel FROM imoveis 
-                    WHERE activo = 1 AND id_imovel NOT IN ({placeholders})
-                """, ids_activos)
+                query = "SELECT id_imovel FROM imoveis WHERE activo = 1"
+                params: List[Any] = []
+
+                if cidade:
+                    query += " AND cidade = ?"
+                    params.append(cidade)
+                if modalidade:
+                    query += " AND modalidade = ?"
+                    params.append(modalidade)
+                if ids_activos:
+                    placeholders = ",".join("?" * len(ids_activos))
+                    query += f" AND id_imovel NOT IN ({placeholders})"
+                    params.extend(ids_activos)
+
+                cursor.execute(query, params)
                 
                 inactivos = [row[0] for row in cursor.fetchall()]
                 
@@ -511,7 +527,13 @@ class Database:
                     for id_im in inactivos:
                         self.registrar_cambio(id_im, "activo", 1, 0, "SOFT_DELETE")
                     
-                    self.logger.info(f"✓ {len(inactivos)} inmuebles marcados como INACTIVOS (no encontrados en búsqueda)")
+                    scope = []
+                    if cidade:
+                        scope.append(f"cidade={cidade}")
+                    if modalidade:
+                        scope.append(f"modalidade={modalidade}")
+                    scope_text = f" ({', '.join(scope)})" if scope else ""
+                    self.logger.info(f"✓ {len(inactivos)} inmuebles marcados como INACTIVOS{scope_text}")
                     for id_im in inactivos[:5]:  # Mostrar primeros 5
                         self.logger.debug(f"  - {id_im}")
                     if len(inactivos) > 5:
@@ -822,41 +844,105 @@ class CaixaScraper:
         except Exception as e:
             self.logger.error(f"Erro ao fechar Playwright: {e}")
 
-    async def navegar_e_buscar(self) -> Union[List[Imovel], tuple]:
+    def _debug_enabled(self) -> bool:
+        """Indica si el modo debug está activo para artefactos verbosos."""
+        return os.getenv("DEBUG", "false").lower() == "true"
+
+    def _modalidade_nome(self, modalidade: Union[str, int]) -> str:
+        """Converte el código de modalidad al nombre legible."""
+        return self.MODALIDADES_MAP.get(str(modalidade), f"Modalidade {modalidade}")
+
+    @staticmethod
+    def _parse_titulo_localizacao(titulo: str, cidade_fallback: str = "") -> Tuple[str, str]:
+        """
+        Parseia títulos del portal como "CURITIBA - TINGUI".
+
+        Returns:
+            (cidade, bairro)
+        """
+        titulo = (titulo or "").strip()
+        if not titulo:
+            return cidade_fallback, ""
+
+        partes = re.split(r"\s+-\s+", titulo, maxsplit=1)
+        if len(partes) == 2:
+            cidade_titulo, bairro = partes[0].strip(), partes[1].strip()
+            return cidade_fallback or cidade_titulo, bairro
+
+        return cidade_fallback, titulo
+
+    async def navegar_e_buscar(self) -> Tuple[List[Imovel], List[Tuple[str, str]]]:
         """
         Navega hasta el portal y ejecuta la búsqueda en TODAS las ciudades y modalidades.
         
-        La función _preencher_formulario_multistep() maneja el flujo completo:
-        - Loop por ciudades (del config)
-        - Loop por modalidades (del config)  
-        - Pasos 1, 2, 3 para CADA combinación ciudad-modalidade
-        - Extracción de resultados DESPUÉS de cada búsqueda
+        Cada combinación ciudad-modalidade se procesa de forma independiente:
+        - Navega al formulario inicial
+        - Completa pasos 1, 2 y 3
+        - Extrae resultados de esa combinación
         
         Returns:
-            Lista de imóveis encontrados en todas las ciudades y modalidades
+            (Lista de imóveis encontrados, alcances completados para soft-delete)
         """
         imoveis_totales = []
+        escopos_completos: List[Tuple[str, str]] = []
         
         try:
-            # Navegar a la página de búsqueda
             url_busca = self.config.get("urls", {}).get(
                 "search_page",
                 "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp"
             )
+            busca_config = self.config.get("busca", {})
+            cidades = busca_config.get("cidades", [])
+            modalidades = busca_config.get("modalidades", [34])
             
             self.logger.info(f"\n{'='*70}")
             self.logger.info(f"Iniciando búsqueda en: {url_busca}")
             self.logger.info(f"{'='*70}\n")
-            
-            await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(2)
-            
-            # Preencher y buscar para TODAS las ciudades y modalidades
-            # (La función maneja todos los loops internamente)
-            await self._preencher_formulario_multistep()
-            
-            # Extraer inmuebles (sin parámetro ciudad_atual, trae TODO)
-            imoveis_totales = await self._extrair_imoveis()
+
+            for cidade_info in cidades:
+                nome_cidade = cidade_info.get("nome", "")
+                codigo_cidade = cidade_info.get("codigo")
+                if not codigo_cidade:
+                    self.logger.warning(f"Ciudad sin código ignorada: {cidade_info}")
+                    continue
+
+                for mod_index, modalidade in enumerate(modalidades, 1):
+                    modalidade_nome = self._modalidade_nome(modalidade)
+                    self.logger.info(f"\n{'='*60}")
+                    self.logger.info(
+                        f"BUSCA: {nome_cidade} ({codigo_cidade}) - "
+                        f"{modalidade_nome} [{mod_index}/{len(modalidades)}]"
+                    )
+                    self.logger.info(f"{'='*60}")
+
+                    try:
+                        await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
+                        await asyncio.sleep(2)
+
+                        formulario_ok = await self._preencher_formulario_multistep(
+                            cidade_info=cidade_info,
+                            modalidade=modalidade
+                        )
+                        if not formulario_ok:
+                            self.logger.warning(
+                                f"Búsqueda omitida por fallo en formulario: {nome_cidade} - {modalidade_nome}"
+                            )
+                            continue
+
+                        imoveis = await self._extrair_imoveis(
+                            cidade_atual=nome_cidade,
+                            modalidade_atual=modalidade_nome
+                        )
+                        imoveis_totales.extend(imoveis)
+                        escopos_completos.append((nome_cidade, modalidade_nome))
+                        self.logger.info(
+                            f"✓ Encontrados {len(imoveis)} inmuebles en {nome_cidade} - {modalidade_nome}"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error en búsqueda {nome_cidade} - {modalidade_nome}: {e}",
+                            exc_info=True
+                        )
             
             self.logger.info(f"\n{'='*70}")
             self.logger.info(f"✓ BÚSQUEDA COMPLETADA: {len(imoveis_totales)} inmuebles encontrados")
@@ -867,15 +953,21 @@ class CaixaScraper:
             import traceback
             self.logger.error(traceback.format_exc())
         
-        return imoveis_totales
+        return imoveis_totales, escopos_completos
 
 
-    async def _preencher_formulario_multistep(self) -> None:
-        """Preenche e submete o formulário multi-step de busca da Caixa."""
+    async def _preencher_formulario_multistep(
+        self,
+        cidade_info: Dict[str, Any],
+        modalidade: Union[str, int]
+    ) -> bool:
+        """Preenche e submete o formulário multi-step para una ciudad/modalidad."""
         try:
             busca_config = self.config.get("busca", {})
             playwright_config = self.config.get("playwright", {})
             timeout = playwright_config.get("timeout", 30000)
+            nome = cidade_info.get("nome", "")
+            codigo = cidade_info.get("codigo")
 
             # Aguarda JavaScript inicial
             await async_sleep_random(2, 4)
@@ -888,141 +980,118 @@ class CaixaScraper:
             await self.page.wait_for_selector(self.SELECTORS["estado"], timeout=timeout)
             await self.page.select_option(self.SELECTORS["estado"], estado)
             await async_sleep_random(0.7, 1.5)
-            
-            # ========== CIUDADES - LOOP PRINCIPAL ==========
-            cidades = busca_config.get("cidades", [])
-            for cidade_info in cidades:
-                codigo = cidade_info.get("codigo")
-                nome = cidade_info.get("nome")
-                if not codigo:
-                    continue
-                
-                self.logger.info(f"\n{'='*60}")
-                self.logger.info(f"CIUDAD: {nome} (código: {codigo})")
-                self.logger.info(f"{'='*60}")
-                
+
+            self.logger.info(f"Selecionando ciudad: {nome} (código: {codigo})")
+            await self.page.select_option(self.SELECTORS["cidade"], str(codigo))
+            await async_sleep_random(0.7, 1.5)
+
+            self.logger.info(f"Selecionando modalidade: {modalidade}")
+            await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
+            await async_sleep_random(0.3, 0.8)
+
+            # ========== CLICK PRÓXIMO (Paso 1 -> 2) ==========
+            self.logger.info("  Navegando al paso 2...")
+            btn_next0 = await self.page.query_selector("#btn_next0")
+            if not btn_next0:
+                self.logger.warning("  Botón #btn_next0 no encontrado")
+                return False
+            await btn_next0.click()
+            await async_sleep_random(1.5, 2.5)
+
+            # ========== PASO 2: Sin filtros restrictivos ==========
+            self.logger.info("  Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
+            await async_sleep_random(0.7, 1.3)
+
+            btn_next1 = await self.page.query_selector("#btn_next1")
+            if not btn_next1:
+                self.logger.warning("  Botón #btn_next1 no encontrado")
+                return False
+            await btn_next1.click()
+            await async_sleep_random(1.5, 2.5)
+
+            # ========== PASO 3: Rellenar dados del cliente ==========
+            self.logger.info("  Paso 3: Rellenando datos del cliente")
+
+            cpf = os.getenv("CAIXA_CPF", "").strip()
+            telefone = os.getenv("CAIXA_TELEFONE", "").strip()
+            email = os.getenv("CAIXA_EMAIL", "").strip()
+
+            if cpf:
                 try:
-                    await self.page.select_option(self.SELECTORS["cidade"], str(codigo))
-                    await async_sleep_random(0.7, 1.5)
-                except Exception as e:
-                    self.logger.warning(f"Erro ao selecionar cidade {nome}: {e}")
-                    continue
-
-                # ========== MODALIDADES - LOOP ANIDADO ==========
-                modalidades = busca_config.get("modalidades", [34])
-                
-                for mod_index, modalidade in enumerate(modalidades, 1):
-                    self.logger.info(f"\n[MODALIDADE {mod_index}/{len(modalidades)}] Processando modalidade: {modalidade}")
-                    
-                    try:
-                        await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
-                        await async_sleep_random(0.3, 0.8)
-                    except Exception as e:
-                        self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
-                        continue
-
-                    await asyncio.sleep(1)
-
-                    # ========== CLICK PRÓXIMO (Paso 1 -> 2) ==========
-                    self.logger.info("  Navegando al paso 2...")
-                    btn_next0 = await self.page.query_selector("#btn_next0")
-                    if btn_next0:
-                        await btn_next0.click()
-                        await async_sleep_random(1.5, 2.5)
+                    cpf_clean = cpf.replace(".", "").replace("-", "")
+                    if len(cpf_clean) == 11:
+                        cpf_formatted = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:11]}"
                     else:
-                        self.logger.warning("  Botón #btn_next0 no encontrado")
-                        continue
-            
-# ========== PASO 2: Sin filtros restrictivos ==========
-                    self.logger.info("  Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
-                    await async_sleep_random(0.7, 1.3)
-                    
-                    # CLICK PRÓXIMO (Paso 2 -> 3)
-                    await async_sleep_random(0.7, 1.3)
-                    btn_next1 = await self.page.query_selector("#btn_next1")
-                    if not btn_next1:
-                        self.logger.warning("  Botón #btn_next1 no encontrado")
-                        continue
-                        
-                    await btn_next1.click()
-                    await async_sleep_random(1.5, 2.5)
-                    
-                    # ========== PASO 3: Rellenar dados del cliente ==========
-                    self.logger.info("  Paso 3: Rellenando datos del cliente")
-                    
-                    # Obtener CPF, Teléfono y Email del .env
-                    cpf = os.getenv("CAIXA_CPF", "").strip()
-                    telefone = os.getenv("CAIXA_TELEFONE", "").strip()
-                    email = os.getenv("CAIXA_EMAIL", "").strip()
-                    
-                    # Rellenar CPF
-                    if cpf:
-                        try:
-                            cpf_clean = cpf.replace(".", "").replace("-", "")
-                            if len(cpf_clean) == 11:
-                                cpf_formatted = f"{cpf_clean[:3]}.{cpf_clean[3:6]}.{cpf_clean[6:9]}-{cpf_clean[9:11]}"
-                            else:
-                                cpf_formatted = cpf
-                            
-                            cpf_field = await self.page.query_selector("#txtCPF")
-                            if cpf_field:
-                                await cpf_field.fill(cpf_formatted)
-                                self.logger.info(f"    ✓ CPF rellenado")
-                        except Exception as e:
-                            self.logger.warning(f"    Error rellenar CPF: {e}")
-                    
-                    # Rellenar Teléfono
-                    if telefone:
-                        try:
-                            tel_field = await self.page.query_selector("#txtTelefone")
-                            if tel_field:
-                                await tel_field.fill(telefone)
-                                self.logger.info(f"    ✓ Teléfono rellenado")
-                        except Exception as e:
-                            self.logger.warning(f"    Error rellenar teléfono: {e}")
-                    
-                    # Rellenar Email
-                    if email:
-                        try:
-                            email_field = await self.page.query_selector("#txtEmail")
-                            if email_field:
-                                await email_field.fill(email)
-                                self.logger.info(f"    ✓ Email rellenado")
-                        except Exception as e:
-                            self.logger.warning(f"    Error rellenar email: {e}")
-                    
-                    # Remover overlay
-                    await asyncio.sleep(1)
-                    try:
-                        await self.page.evaluate("() => { const o = document.querySelector('.ui-widget-overlay'); if (o) o.remove(); }")
-                    except:
-                        pass
-                    
-                    # CLICK ENVIAR (Paso 3 -> Resultados)
-                    btn_next2 = await self.page.query_selector("#btn_next2")
-                    if btn_next2:
-                        await btn_next2.click()
-                        
-                        # Esperar resultados
-                        for attempt in range(20):
-                            await asyncio.sleep(0.5)
-                            items = await self.page.query_selector_all("li.group-block-item")
-                            if items:
-                                self.logger.info(f"  ✓ Resultados cargados: {len(items)} items")
-                                break
-                    
-                    await asyncio.sleep(1)
+                        cpf_formatted = cpf
+
+                    cpf_field = await self.page.query_selector("#txtCPF")
+                    if cpf_field:
+                        await cpf_field.fill(cpf_formatted)
+                        self.logger.info("    ✓ CPF rellenado")
+                except Exception as e:
+                    self.logger.warning(f"    Error rellenar CPF: {e}")
+
+            if telefone:
+                try:
+                    tel_field = await self.page.query_selector("#txtTelefone")
+                    if tel_field:
+                        await tel_field.fill(telefone)
+                        self.logger.info("    ✓ Teléfono rellenado")
+                except Exception as e:
+                    self.logger.warning(f"    Error rellenar teléfono: {e}")
+
+            if email:
+                try:
+                    email_field = await self.page.query_selector("#txtEmail")
+                    if email_field:
+                        await email_field.fill(email)
+                        self.logger.info("    ✓ Email rellenado")
+                except Exception as e:
+                    self.logger.warning(f"    Error rellenar email: {e}")
+
+            await asyncio.sleep(1)
+            try:
+                await self.page.evaluate("() => { const o = document.querySelector('.ui-widget-overlay'); if (o) o.remove(); }")
+            except Exception:
+                pass
+
+            btn_next2 = await self.page.query_selector("#btn_next2")
+            if not btn_next2:
+                self.logger.warning("  Botón #btn_next2 no encontrado")
+                return False
+
+            await btn_next2.click()
+
+            for attempt in range(20):
+                await asyncio.sleep(0.5)
+                items = await self.page.query_selector_all("li.group-block-item")
+                if items:
+                    self.logger.info(f"  ✓ Resultados cargados: {len(items)} items")
+                    return True
+
+                html = await self.page.content()
+                if "Nenhum Resultado" in html or "nenhum resultado" in html.lower():
+                    self.logger.info("  ✓ Búsqueda concluida sin resultados")
+                    return True
+
+            self.logger.warning("  Resultados no detectados dentro del timeout")
+            return False
 
         except Exception as e:
             self.logger.error(f"Erro ao preencher formulário: {e}")
-            raise
+            return False
 
-    async def _extrair_imoveis(self, cidade_atual: str = "") -> List[Imovel]:
+    async def _extrair_imoveis(
+        self,
+        cidade_atual: str = "",
+        modalidade_atual: str = ""
+    ) -> List[Imovel]:
         """
         Extrai dados dos imóveis da página de resultados (con soporte para paginação).
 
         Args:
             cidade_atual: Nombre de la ciudad actual siendo buscada
+            modalidade_atual: Nombre de la modalidad actual siendo buscada
 
         Returns:
             Lista de objetos Imovel
@@ -1038,11 +1107,11 @@ class CaixaScraper:
             self.logger.info("Esperando 8 segundos para que los resultados se carguen completamente...")
             await asyncio.sleep(8)
             
-            # GUARDAR HTML PARA COMPARACIÓN
             html_content = await self.page.content()
-            with open("/tmp/scraper_resultados.html", "w", encoding="utf-8") as f:
-                f.write(html_content)
-            self.logger.info(f"HTML guardado: {len(html_content)} bytes en /tmp/scraper_resultados.html")
+            if self._debug_enabled():
+                with open("/tmp/scraper_resultados.html", "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                self.logger.debug(f"HTML guardado: {len(html_content)} bytes en /tmp/scraper_resultados.html")
             
             # Verificar que el elemento container existe
             container = await self.page.query_selector("#listaimoveispaginacao")
@@ -1051,24 +1120,24 @@ class CaixaScraper:
             else:
                 self.logger.warning("⚠️  Container #listaimoveispaginacao NO detectado")
             
-            # DEBUG: Probar cada selector directamente
-            self.logger.info("=== DEBUG: PROBANDO SELECTORES ===")
-            test_selectors = [
-                "li.group-block-item",
-                "#listaimoveispaginacao li.group-block-item",
-                "#listaimoveispaginacao",
-                "li[class*='group-block']",
-                ".group-block-item"
-            ]
-            
-            for test_sel in test_selectors:
-                try:
-                    test_items = await self.page.query_selector_all(test_sel)
-                    self.logger.info(f"  Selector '{test_sel}': {len(test_items)} elementos")
-                except Exception as e:
-                    self.logger.info(f"  Selector '{test_sel}': ERROR - {e}")
-            
-            self.logger.info("=== FIN DEBUG ===\n")
+            if self._debug_enabled():
+                self.logger.debug("=== DEBUG: PROBANDO SELECTORES ===")
+                test_selectors = [
+                    "li.group-block-item",
+                    "#listaimoveispaginacao li.group-block-item",
+                    "#listaimoveispaginacao",
+                    "li[class*='group-block']",
+                    ".group-block-item"
+                ]
+
+                for test_sel in test_selectors:
+                    try:
+                        test_items = await self.page.query_selector_all(test_sel)
+                        self.logger.debug(f"  Selector '{test_sel}': {len(test_items)} elementos")
+                    except Exception as e:
+                        self.logger.debug(f"  Selector '{test_sel}': ERROR - {e}")
+
+                self.logger.debug("=== FIN DEBUG ===\n")
             
             # MANEJO DE SCROLL INFINITO - Cargar todos los items con scroll
             # Caixa usa lazy-load: necesitamos scroll para cargar más resultados
@@ -1109,10 +1178,10 @@ class CaixaScraper:
                         self.logger.warning("Página indica: Nenhum resultado encontrado")
                         break
                     
-                    # Guardar HTML para análisis
-                    with open("resultado_extraccion.html", "w", encoding="utf-8") as f:
-                        f.write(page_html)
-                    self.logger.debug("HTML guardado en resultado_extraccion.html")
+                    if self._debug_enabled():
+                        with open("/tmp/resultado_extraccion.html", "w", encoding="utf-8") as f:
+                            f.write(page_html)
+                        self.logger.debug("HTML guardado en /tmp/resultado_extraccion.html")
                     break
                 
                 # Procesar los items NUEVOS (desde ultima_cantidad hasta ahora)
@@ -1121,7 +1190,11 @@ class CaixaScraper:
                 for i in range(ultima_cantidad, len(linhas)):
                     try:
                         linha = linhas[i]
-                        imovel = await self._extrair_dados_linha(linha, cidade_atual=cidade_atual)
+                        imovel = await self._extrair_dados_linha(
+                            linha,
+                            cidade_atual=cidade_atual,
+                            modalidade_atual=modalidade_atual
+                        )
                         if imovel:
                             imoveis.append(imovel)
                             self.logger.debug(f"Imóvel {i+1} extraído: {imovel.bairro}, R$ {imovel.preco}")
@@ -1157,13 +1230,19 @@ class CaixaScraper:
             self.logger.error(f"Error general ao extrair imóveles: {e}", exc_info=True)
             return imoveis
 
-    async def _extrair_dados_linha(self, elemento, cidade_atual: str = "") -> Optional[Imovel]:
+    async def _extrair_dados_linha(
+        self,
+        elemento,
+        cidade_atual: str = "",
+        modalidade_atual: str = ""
+    ) -> Optional[Imovel]:
         """
         Extrai dados de um elemento li.group-block-item.
 
         Args:
             elemento: Elemento HTML
             cidade_atual: Nombre de la ciudad actual siendo buscada
+            modalidade_atual: Nombre de la modalidad actual siendo buscada
 
         Returns:
             Objeto Imovel o None si falla
@@ -1196,58 +1275,44 @@ class CaixaScraper:
                 self.logger.debug("No se pudo extraer ID del imóvel")
                 return None
             
-            # Extraer título y precio de la primera línea en la lista
+            # Extraer título/localización.
             titulo_completo = ""
-            preco_str = ""
-            
-            # Buscar en "TITULO | R$ PRECO" format
-            title_elem = await elemento.query_selector(".dadosimovel-col2 a > span > strong > font")
+
+            title_elem = await elemento.query_selector(
+                ".dadosimovel-col2 strong font a, .dadosimovel-col2 a[onclick*='detalhe_imovel']"
+            )
             if title_elem:
                 titulo_completo = await title_elem.text_content()
                 titulo_completo = titulo_completo.strip()
-            
-            # Parsear título y precio
-            # Formato: "FOZ DO IGUACU - CONJUNTO RESIDENCIAL VILLAGE SAO FRANCISCO | R$ 310.000,00"
-            if titulo_completo:
-                if "|" in titulo_completo:
-                    partes = titulo_completo.split("|")
-                    bairro_cidade = partes[0].strip() if partes else ""
-                    preco_str = partes[1].strip() if len(partes) > 1 else ""
-                else:
-                    bairro_cidade = titulo_completo
-            else:
-                bairro_cidade = ""
-            
-            # Extraer precio
-            preco = self._extrair_preco(preco_str) if preco_str else 0.0
-            
-            # Log detallado de precio para debugging
-            if preco == 0.0 and preco_str:
-                self.logger.debug(f"Precio extraído como 0.0 de texto: '{preco_str}' - ID: {id_imovel}")
-            elif preco == 0.0:
-                self.logger.debug(f"Precio vacío (sin preco_str) para ID: {id_imovel}")
-            
-            # Extraer descripción (segunda línea y siguientes)
-            desc_lines = []
-            # Selector correcto: todos los <font> dentro de .dadosimovel-col2
+
+            cidade_titulo, bairro_titulo = self._parse_titulo_localizacao(
+                titulo_completo,
+                cidade_fallback=cidade_atual
+            )
+
+            # Extraer precio y descripción desde los fonts reales del portal.
+            preco_texto = ""
+            desc_lines: List[str] = []
             desc_fonts = await elemento.query_selector_all(".dadosimovel-col2 font")
-            for i, font_elem in enumerate(desc_fonts):
-                desc_text = await font_elem.text_content()
-                if desc_text.strip():
-                    # Primera es el título (ya capturada), skip it
-                    if i > 0:
-                        desc_lines.append(desc_text.strip())
+            for font_elem in desc_fonts:
+                font_text = (await font_elem.text_content() or "").strip()
+                if not font_text:
+                    continue
+
+                if titulo_completo and font_text == titulo_completo:
+                    continue
+
+                if "Valor mínimo de venda" in font_text or "Valor de avaliação" in font_text:
+                    preco_texto = font_text
+                    continue
+
+                desc_lines.append(font_text)
+
+            preco = self._extrair_preco(preco_texto) if preco_texto else 0.0
+            if preco == 0.0:
+                self.logger.debug(f"Preço não extraído para ID {id_imovel}; texto='{preco_texto[:80]}'")
             
             descricao = " | ".join(desc_lines) if desc_lines else ""
-            
-            # Extraer bairro/ciudad de la descripción
-            # Ejemplo: "Apartamento - 104,22 m2, 2 quarto(s), 1 vaga(s) na garagem - Leilão SFI..."
-            bairro = ""
-            if "na garagem" in descricao:
-                # Extraer tipo de imóvel
-                match = re.search(r"^([^-]+)", descricao)
-                if match:
-                    bairro = match.group(1).strip()
             
             # Link del imóvel - Usar endpoint local que simula detalhe_imovel()
             # Este endpoint genera un formulario con POST a Caixa
@@ -1256,22 +1321,15 @@ class CaixaScraper:
             base_url = self.config.get("urls", {}).get("web_base_url", "http://localhost:5000")
             link = f"{base_url}/link-imovel/{id_imovel}"
             
-            # Modalidad y ciudad
-            busca_config = self.config.get("busca", {})
-            # Mapear números de modalidad a nombres legibles
-            modalidades_nums = busca_config.get("modalidades", [])
-            modalidades_nombres = [
-                self.MODALIDADES_MAP.get(str(m), f"Modalidad {m}") 
-                for m in modalidades_nums
-            ]
-            modalidade = " | ".join(modalidades_nombres)
-            cidade = cidade_atual  # Usar la ciudad actual pasada como parámetro
+            modalidade = modalidade_atual or ""
+            cidade = cidade_titulo or cidade_atual
+            bairro = bairro_titulo or titulo_completo
             
             # Crear objeto Imovel
             imovel = Imovel(
                 id_imovel=id_imovel,
                 codigo=id_imovel,  # Usar ID como código también
-                bairro=bairro if bairro else bairro_cidade,
+                bairro=bairro,
                 preco=preco,
                 descricao=descricao,
                 link=link,
@@ -1287,7 +1345,6 @@ class CaixaScraper:
             self.logger.debug(f"Erro ao extrair dados de linha: {e}")
             return None
 
-    @staticmethod
     @staticmethod
     def _extrair_preco(texto: str) -> float:
         """
@@ -1309,7 +1366,7 @@ class CaixaScraper:
             
             # PREFERENCIA 1: Extraer "Valor mínimo de venda" (lo que se paga realmente)
             # Formato: "Valor mínimo de venda: R$ 1.453.076,60"
-            match_minimo = re.search(r"Valor\s+mínimo\s+de\s+venda:\s*R\$\s*([\d.]+,\d+)", texto_limpio)
+            match_minimo = re.search(r"Valor\s+m[ií]nimo\s+de\s+venda:\s*R\$\s*([\d.]+,\d+)", texto_limpio, re.IGNORECASE)
             if match_minimo:
                 valor_str = match_minimo.group(1)
                 valor = float(valor_str.replace(".", "").replace(",", "."))
@@ -1317,7 +1374,7 @@ class CaixaScraper:
             
             # PREFERENCIA 2: Extraer "Valor de avaliação" (si no hay mínimo)
             # Formato: "Valor de avaliação: R$ 2.280.000,00"
-            match_avaliacao = re.search(r"Valor\s+de\s+avaliação:\s*R\$\s*([\d.]+,\d+)", texto_limpio)
+            match_avaliacao = re.search(r"Valor\s+de\s+avalia[cç][aã]o:\s*R\$\s*([\d.]+,\d+)", texto_limpio, re.IGNORECASE)
             if match_avaliacao:
                 valor_str = match_avaliacao.group(1)
                 valor = float(valor_str.replace(".", "").replace(",", "."))
@@ -1449,20 +1506,30 @@ class CaixaScraper:
             await self.iniciar()
             
             # Navega e busca
-            imoveis = await self.navegar_e_buscar()
+            imoveis, escopos_completos = await self.navegar_e_buscar()
             resultado["imoveis_encontrados"] = len(imoveis)
-            
+
             if imoveis:
                 # Processa resultados
                 novos, alertas, ids_encontrados = await self.processar_resultados(imoveis)
                 resultado["imoveis_filtrados"] = len(self._aplicar_filtros(imoveis))
                 resultado["novos_imoveis"] = novos
                 resultado["alertas_enviados"] = alertas
-                
-                # SOFT DELETE: Marcar como inactivos los que NO fueron encontrados
-                if ids_encontrados:
-                    inativados = self.db.soft_delete_inactivos(ids_encontrados)
-                    resultado["imoveis_inativados"] = inativados
+
+            # SOFT DELETE: Marcar como inactivos solo dentro de búsquedas completadas
+            inativados_total = 0
+            for cidade, modalidade in escopos_completos:
+                ids_escopo = [
+                    imovel.id_imovel
+                    for imovel in imoveis
+                    if imovel.cidade == cidade and imovel.modalidade == modalidade
+                ]
+                inativados_total += self.db.soft_delete_inactivos(
+                    ids_escopo,
+                    cidade=cidade,
+                    modalidade=modalidade
+                )
+            resultado["imoveis_inativados"] = inativados_total
             
             # Limpeza de dados antigos
             dias_cleanup = self.config.get("database", {}).get("cleanup_days", 90)

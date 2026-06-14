@@ -49,6 +49,8 @@ def main():
     test_files = [
         "test_loop_structure.py",
         "test_loop_behavior.py",
+        "test_scraper_extraction.py",
+        "test_web_security.py",
     ]
     
     # Verificar que existen
@@ -84,12 +86,11 @@ def main():
     
     if failed == 0:
         print("🎉 ¡TODOS LOS TESTS PASARON!")
-        print("\nEstructura de loops validada:")
-        print("  ✓ 2 loops anidados (ciudad → modalidade)")
-        print("  ✓ Todas las ciudades procesadas")
-        print("  ✓ Todas las modalidades por ciudad")
-        print("  ✓ Pasos 1-3 para cada modalidade")
-        print("  ✓ Iteraciones correctas (ciudades × modalidades)")
+        print("\nValidaciones principales:")
+        print("  ✓ Búsqueda independiente por ciudad/modalidade")
+        print("  ✓ Extracción real de precio, bairro y modalidade")
+        print("  ✓ API de sincronización protegida por token")
+        print("  ✓ Endpoint debug oculto fuera de FLASK_DEBUG=true")
         print("\n")
         return 0
     else:

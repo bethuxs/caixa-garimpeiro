@@ -2,6 +2,31 @@
 // GARIMPEIRO DE IMÓVEIS - JavaScript
 // ============================================================================
 
+function escapeHTML(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function escapeAttribute(value) {
+    return escapeHTML(value);
+}
+
+function safeUrl(value) {
+    try {
+        const url = new URL(String(value ?? ''), window.location.origin);
+        if (url.protocol === 'http:' || url.protocol === 'https:') {
+            return escapeAttribute(url.href);
+        }
+    } catch (error) {
+        // Invalid URLs fall through to the harmless placeholder.
+    }
+    return '#';
+}
+
 async function carregarCidades() {
     try {
         const response = await fetch('/api/cidades');
@@ -77,45 +102,60 @@ function renderizarImoveis(imoveis) {
     }
 
     container.innerHTML = imoveis.map(imovel => `
-        <div class="imovel-card" onclick="mostrarDetalhes('${imovel.id_imovel}')">
+        <div class="imovel-card" data-id="${escapeAttribute(imovel.id_imovel)}">
             <div class="imovel-header">
-                <div class="imovel-id">ID: ${imovel.id_imovel}</div>
-                <div class="imovel-bairro">${imovel.bairro}</div>
+                <div class="imovel-id">ID: ${escapeHTML(imovel.id_imovel)}</div>
+                <div class="imovel-bairro">${escapeHTML(imovel.bairro)}</div>
             </div>
             <div class="imovel-body">
-                <div class="imovel-preco">${imovel.preco_formatado}</div>
+                <div class="imovel-preco">${escapeHTML(imovel.preco_formatado)}</div>
                 
                 <div class="imovel-campo">
                     <div class="imovel-label">Cidade</div>
-                    <div class="imovel-valor">${imovel.cidade}</div>
+                    <div class="imovel-valor">${escapeHTML(imovel.cidade)}</div>
                 </div>
 
                 <div class="imovel-campo">
                     <div class="imovel-label">Modalidade</div>
-                    <div class="imovel-valor">${imovel.modalidade}</div>
+                    <div class="imovel-valor">${escapeHTML(imovel.modalidade)}</div>
                 </div>
 
                 <div class="imovel-campo">
                     <div class="imovel-label">Descrição</div>
-                    <div class="imovel-descricao">${imovel.descricao}</div>
+                    <div class="imovel-descricao">${escapeHTML(imovel.descricao)}</div>
                 </div>
 
                 <div class="imovel-campo">
                     <div class="imovel-label">Inserido em</div>
-                    <div class="imovel-valor">${imovel.data_insercao}</div>
+                    <div class="imovel-valor">${escapeHTML(imovel.data_insercao)}</div>
                 </div>
 
                 <div class="imovel-footer">
-                    <button class="btn btn-primary" onclick="mostrarDetalhes('${imovel.id_imovel}'); event.stopPropagation();">
+                    <button class="btn btn-primary" data-action="detalhes" data-id="${escapeAttribute(imovel.id_imovel)}">
                         📋 Ver Detalhes
                     </button>
-                    <a href="${imovel.link}" target="_blank" class="btn btn-secondary" onclick="event.stopPropagation();">
+                    <a href="${safeUrl(imovel.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
                         🔗 Ir para Caixa
                     </a>
                 </div>
             </div>
         </div>
     `).join('');
+
+    container.querySelectorAll('.imovel-card').forEach(card => {
+        card.addEventListener('click', () => mostrarDetalhes(card.dataset.id));
+    });
+
+    container.querySelectorAll('[data-action="detalhes"]').forEach(button => {
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            mostrarDetalhes(button.dataset.id);
+        });
+    });
+
+    container.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', event => event.stopPropagation());
+    });
 }
 
 function atualizarPaginacao(total) {
@@ -158,46 +198,46 @@ async function mostrarDetalhes(idImovel) {
             const modal = document.getElementById('modal-detalhe');
             
             modal.querySelector('#modal-body').innerHTML = `
-                <h2>${imovel.bairro}</h2>
+                <h2>${escapeHTML(imovel.bairro)}</h2>
                 
-                <div class="modal-preco">${imovel.preco_formatado}</div>
+                <div class="modal-preco">${escapeHTML(imovel.preco_formatado)}</div>
 
                 <div class="modal-campo">
                     <div class="modal-label">ID do Imóvel</div>
-                    <div class="modal-valor">${imovel.id_imovel}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.id_imovel)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Código</div>
-                    <div class="modal-valor">${imovel.codigo}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.codigo)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Cidade</div>
-                    <div class="modal-valor">${imovel.cidade}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.cidade)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Modalidade</div>
-                    <div class="modal-valor">${imovel.modalidade}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.modalidade)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Descrição</div>
-                    <div class="modal-valor">${imovel.descricao}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.descricao)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Data de Captura</div>
-                    <div class="modal-valor">${imovel.data_captura}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.data_captura)}</div>
                 </div>
 
                 <div class="modal-campo">
                     <div class="modal-label">Data de Inserção</div>
-                    <div class="modal-valor">${imovel.data_insercao}</div>
+                    <div class="modal-valor">${escapeHTML(imovel.data_insercao)}</div>
                 </div>
 
-                <a href="${imovel.link}" target="_blank" class="btn btn-primary modal-link">
+                <a href="${safeUrl(imovel.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary modal-link">
                     🔗 Acessar Portal Caixa
                 </a>
             `;
@@ -219,8 +259,8 @@ async function carregarEstatisticas() {
             const topBairros = document.getElementById('top-bairros');
             topBairros.innerHTML = data.bairros.map(b => `
                 <li>
-                    <strong>${b.bairro}</strong>
-                    <span>${b.total}</span>
+                    <strong>${escapeHTML(b.bairro)}</strong>
+                    <span>${escapeHTML(b.total)}</span>
                 </li>
             `).join('');
 
@@ -228,8 +268,8 @@ async function carregarEstatisticas() {
             const cidades = document.getElementById('cidades');
             cidades.innerHTML = data.cidades.map(c => `
                 <li>
-                    <strong>${c.cidade}</strong>
-                    <span>${c.total}</span>
+                    <strong>${escapeHTML(c.cidade)}</strong>
+                    <span>${escapeHTML(c.total)}</span>
                 </li>
             `).join('');
 
@@ -237,8 +277,8 @@ async function carregarEstatisticas() {
             const modalidades = document.getElementById('modalidades');
             modalidades.innerHTML = data.modalidades.map(m => `
                 <li>
-                    <strong>${m.modalidade}</strong>
-                    <span>${m.total}</span>
+                    <strong>${escapeHTML(m.modalidade)}</strong>
+                    <span>${escapeHTML(m.total)}</span>
                 </li>
             `).join('');
         }
