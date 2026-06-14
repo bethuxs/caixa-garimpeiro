@@ -2,6 +2,25 @@
 // GARIMPEIRO DE IMÓVEIS - JavaScript
 // ============================================================================
 
+async function carregarCidades() {
+    try {
+        const response = await fetch('/api/cidades');
+        const data = await response.json();
+        
+        if (data.sucesso) {
+            const select = document.getElementById('filtro-cidade');
+            data.cidades.forEach(cidade => {
+                const option = document.createElement('option');
+                option.value = cidade;
+                option.textContent = cidade;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erro ao carregar cidades:', error);
+    }
+}
+
 async function carregarBairros() {
     try {
         const response = await fetch('/api/bairros');
@@ -26,6 +45,7 @@ async function carregarImoveis() {
         const params = new URLSearchParams({
             page: paginaAtual,
             limit: imovelsPorPagina,
+            cidade: filtrosBuscaAtivos.cidade || '',
             bairro: filtrosBuscaAtivos.bairro || '',
             preco_min: filtrosBuscaAtivos.preco_min || 0,
             preco_max: filtrosBuscaAtivos.preco_max || 999999999,
@@ -117,6 +137,7 @@ function atualizarPaginacao(total) {
 }
 
 function aplicarFiltros() {
+    filtrosBuscaAtivos.cidade = document.getElementById('filtro-cidade').value;
     filtrosBuscaAtivos.bairro = document.getElementById('filtro-bairro').value;
     filtrosBuscaAtivos.preco_min = 
         parseFloat(document.getElementById('filtro-preco-min').value) || 0;

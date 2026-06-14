@@ -50,6 +50,13 @@
         <h2>Filtros</h2>
         <div class="filtros-container">
             <div class="filtro-grupo">
+                <label for="filtro-cidade">Cidade:</label>
+                <select id="filtro-cidade">
+                    <option value="">Todas</option>
+                </select>
+            </div>
+
+            <div class="filtro-grupo">
                 <label for="filtro-bairro">Bairro:</label>
                 <select id="filtro-bairro">
                     <option value="">Todos</option>
@@ -72,6 +79,7 @@
                     <option value="data_insercao">Mais Recentes</option>
                     <option value="preco">Menor Preço</option>
                     <option value="bairro">Bairro (A-Z)</option>
+                    <option value="cidade">Cidade (A-Z)</option>
                 </select>
             </div>
 
@@ -146,13 +154,14 @@
 
 {% block extra_js %}
 <script>
-    // Dados iniciais
+    // Datos iniciales
     const totalImoveis = {{ total_imoveis }};
     let paginaAtual = 1;
     const imovelsPorPagina = 20;
 
     // Variáveis de filtro
     let filtrosBuscaAtivos = {
+        cidade: '',
         bairro: '',
         preco_min: 0,
         preco_max: 999999999,
@@ -160,6 +169,7 @@
     };
 
     document.addEventListener('DOMContentLoaded', function() {
+        carregarCidades();
         carregarBairros();
         carregarEstatisticas();
         carregarImoveis();
@@ -171,12 +181,14 @@
         });
 
         document.getElementById('btn-limpar').addEventListener('click', () => {
+            document.getElementById('filtro-cidade').value = '';
             document.getElementById('filtro-bairro').value = '';
             document.getElementById('filtro-preco-min').value = '';
             document.getElementById('filtro-preco-max').value = '';
             document.getElementById('filtro-ordenar').value = 'data_insercao';
             paginaAtual = 1;
             filtrosBuscaAtivos = {
+                cidade: '',
                 bairro: '',
                 preco_min: 0,
                 preco_max: 999999999,

@@ -105,11 +105,12 @@ def index():
 
 @app.route("/api/imoveis")
 def api_imoveis():
-    """API para listar imóveis com filtros."""
+    """API para listar imóveis con filtros."""
     try:
         page = request.args.get("page", 1, type=int)
         limit = request.args.get("limit", 20, type=int)
         bairro = request.args.get("bairro", "").upper()
+        cidade = request.args.get("cidade", "").upper()
         preco_min = request.args.get("preco_min", 0, type=float)
         preco_max = request.args.get("preco_max", 999999999, type=float)
         ordenar = request.args.get("ordenar", "data_insercao", type=str)
@@ -123,13 +124,18 @@ def api_imoveis():
         query = "SELECT * FROM imoveis WHERE preco >= ? AND preco <= ?"
         params = [preco_min, preco_max]
         
+        # Filtro por ciudad
+        if cidade:
+            query += " AND cidade LIKE ?"
+            params.append(f"%{cidade}%")
+        
         # Filtro por bairro
         if bairro:
             query += " AND bairro LIKE ?"
             params.append(f"%{bairro}%")
         
-        # Ordenação
-        ordem_permitidas = ["data_insercao", "preco", "bairro", "id_imovel"]
+        # Ordenación
+        ordem_permitidas = ["data_insercao", "preco", "bairro", "id_imovel", "cidade"]
         if ordenar not in ordem_permitidas:
             ordenar = "data_insercao"
         
@@ -140,7 +146,7 @@ def api_imoveis():
         cursor.execute(count_query, params)
         total = cursor.fetchone()["total"]
         
-        # Buscar dados
+        # Buscar datos
         query += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor.execute(query, params)
@@ -148,7 +154,7 @@ def api_imoveis():
         
         conn.close()
         
-        # Formatar resposta
+        # Formatar respuesta
         resultado = []
         for imovel in imoveis:
             resultado.append({
@@ -274,6 +280,25 @@ def api_bairros():
             "sucesso": True,
             "bairros": bairros,
             "total": len(bairros)
+        })
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+@app.route("/api/cidades")
+def api_cidades():
+    """API para listar ciudades únicas."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT cidade FROM imoveis ORDER BY cidade")
+        cidades = [row["cidade"] for row in cursor.fetchall()]
+        conn.close()
+        
+        return jsonify({
+            "sucesso": True,
+            "cidades": cidades,
+            "total": len(cidades)
         })
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
