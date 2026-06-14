@@ -62,9 +62,8 @@ cp .env.example .env
 Edite o arquivo `.env` e preenchha com seus dados:
 
 ```env
-# Obter TOKEN e CHAT_ID do Telegram (ver seção abaixo)
-TELEGRAM_TOKEN=seu_token_aqui_do_botfather
-TELEGRAM_CHAT_ID=seu_chat_id_pessoal
+# Combine TOKEN e CHAT_ID do Telegram em uma única variável (formato: token:chat_id)
+TELEGRAM_CREDENTIALS=seu_token_aqui_do_botfather:seu_chat_id_pessoal
 
 # Opcional
 DEBUG=false
@@ -121,25 +120,59 @@ curl "https://api.telegram.org/bot[SEU_TOKEN]/getUpdates"
 
 ## 🚀 Uso
 
-### Executar uma vez
+### Executar uma única vez
 
 ```bash
+source venv/bin/activate  # Ativar ambiente virtual
 python scraper.py
 ```
 
-### Executar em intervalos (Cron)
+**O que acontece:**
+1. Lê configurações de `config.yaml` e variáveis de `.env`
+2. Conecta ao portal da Caixa
+3. Busca imóveis conforme filtros configurados
+4. Filtra resultados e envia alertas via Telegram para novos imóveis
+5. Registra dados no `database.db`
+6. Sai
+
+### Executar continuamente com Cron (Recomendado para VPS)
 
 #### Linux/macOS - Executar a cada 1 hora
 
 ```bash
-# Edite o crontab
+# Abra o editor do crontab
 crontab -e
 
-# Adicione a linha:
-0 * * * * cd /home/beto/www/caixa && /path/to/venv/bin/python scraper.py
+# Adicione esta linha (substitua o caminho do venv):
+0 * * * * cd /home/beto/www/caixa && /home/beto/www/caixa/venv/bin/python scraper.py >> scraper.log 2>&1
 ```
 
-#### Usando systemd timer (Alternativa moderna)
+**Outros intervalos úteis:**
+```bash
+# A cada 30 minutos
+*/30 * * * * cd /home/beto/www/caixa && /home/beto/www/caixa/venv/bin/python scraper.py
+
+# A cada 15 minutos
+*/15 * * * * cd /home/beto/www/caixa && /home/beto/www/caixa/venv/bin/python scraper.py
+
+# A cada dia às 08:00
+0 8 * * * cd /home/beto/www/caixa && /home/beto/www/caixa/venv/bin/python scraper.py
+
+# Segunda a sexta às 09:00 e 17:00
+0 9,17 * * 1-5 cd /home/beto/www/caixa && /home/beto/www/caixa/venv/bin/python scraper.py
+```
+
+**Para verificar crons ativos:**
+```bash
+crontab -l
+```
+
+**Para remover cron:**
+```bash
+crontab -r
+```
+
+#### Usando systemd timer (Alternativa moderna para VPS)
 
 Crie `/etc/systemd/system/caixa-scraper.service`:
 
@@ -181,6 +214,293 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now caixa-scraper.timer
 sudo systemctl status caixa-scraper.timer
 ```
+
+## 📋 Referência de Configuração (config.yaml)
+
+### Seção: `busca` - Parâmetros de Busca no Portal
+
+Define **qual estado, cidades e tipos de imóvel** devem ser procurados.
+
+```yaml
+busca:
+  estado: "PR"                    # Estado (sigla de 2 letras)
+  cidades:
+    - nome: "Curitiba"            # Nome da cidade (para logs)
+      codigo: "6143"              # Código interno do portal da Caixa
+    - nome: "Cascavel"
+      codigo: "6068"
+    - nome: "Pinhais"
+      codigo: "6578"
+    - nome: "São José dos Pinhais"
+      codigo: "6794"
+    - nome: "Foz do Iguaçu"
+      codigo: "6220"
+  modalidades: [14, 33, 34]       # IDs das modalidades desejadas
+```
+
+**Modalidades disponíveis:**
+- `14` = Leilão SFI - Edital Único
+- `33` = Venda Online (Melhor Oferta)
+- `34` = Venda Direta Online
+- Consulte o portal para outros códigos
+
+**⚠️ Nota sobre Modalidades:**
+- Os números (14, 33, 34) são convertidos automaticamente para nomes legíveis nos resultados
+- Exemplo: em `config.yaml` você define `modalidades: [33]`, mas nos resultados e Telegram aparecerá como "Venda Online (Melhor Oferta)"
+- Imóveis com preço R$ 0 são automaticamente descartados
+
+**Como obter código de cidade:**
+1. Acesse: https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis
+2. Abra DevTools (F12) → Aba Network
+3. Selecione um estado, depois a cidade
+4. Procure pela requisição que contém a cidade e veja seu código
+
+---
+
+### Seção: `filtros` - Filtros de Resultado
+
+Define **quais imóveis são importantes** depois que foram coletados. O scraper coleta TODOS e depois filtra localmente.
+
+```yaml
+filtros:
+  preco_maximo: 999999999.00      # Preço máximo em reais (sem limite)
+  cidades_alvo: []                # Lista de cidades para alertar (vazio = todas)
+  bairros_alvo: []                # Lista de bairros para alertar (vazio = todos)
+```
+
+**⚠️ Importante:**
+- Se `cidades_alvo` está **vazio** → alerta de TODAS as cidades
+- Se `bairros_alvo` está **vazio** → alerta de TODOS os bairros
+- Se ambos têm valores → filtra por AMBOS (AND lógico)
+- Se apenas `cidades_alvo` tem valores → filtra apenas por cidade
+
+**Exemplos:**
+
+```yaml
+# Exemplo 1: Apenas Curitiba, qualquer bairro
+filtros:
+  preco_maximo: 999999999.00
+  cidades_alvo:
+    - "Curitiba"
+  bairros_alvo: []
+
+# Exemplo 2: Curitiba OU Pinhais, qualquer preço
+filtros:
+  preco_maximo: 999999999.00
+  cidades_alvo:
+    - "Curitiba"
+    - "Pinhais"
+  bairros_alvo: []
+
+# Exemplo 3: Apenas Tarumã (qualquer cidade)
+filtros:
+  preco_maximo: 999999999.00
+  cidades_alvo: []
+  bairros_alvo:
+    - "TARUMÃ"
+
+# Exemplo 4: Curitiba E Tarumã até R$ 200.000
+filtros:
+  preco_maximo: 200000.00
+  cidades_alvo:
+    - "Curitiba"
+  bairros_alvo:
+    - "TARUMÃ"
+
+# Exemplo 5: Sem nenhum filtro (alerta TUDO)
+filtros:
+  preco_maximo: 999999999.00
+  cidades_alvo: []
+  bairros_alvo: []
+```
+
+---
+
+### Seção: `playwright` - Configuração do Navegador Automatizado
+
+Controla como o Playwright (navegador headless) se comporta durante o scraping.
+
+```yaml
+playwright:
+  headless: true                          # true = sem janela visível, false = mostra navegador
+  timeout: 30000                          # Timeout em ms (30s) para aguardar elementos
+  wait_between_requests: 2                # Tempo de espera entre requisições em segundos
+  max_retries: 3                          # Número máximo de tentativas ao carregar página
+  user_agent: "Mozilla/5.0 (Windows NT..." # User-Agent customizado
+```
+
+**Recomendações:**
+
+| Configuração | Valor | Quando usar |
+|---|---|---|
+| `headless` | `true` | Em produção (VPS, Cron, etc) |
+| `headless` | `false` | Debugando localmente |
+| `timeout` | `30000` (30s) | Padrão - portal responde rápido |
+| `timeout` | `60000` (60s) | Portal lento ou conexão ruim |
+| `wait_between_requests` | `2` | Padrão - respeita servidor |
+| `wait_between_requests` | `5` | Portal bloqueia requisições rápidas |
+| `max_retries` | `3` | Padrão - tenta 3 vezes antes de falhar |
+
+---
+
+### Seção: `logging` - Configuração de Logs
+
+Define **como e onde** registrar informações do scraping.
+
+```yaml
+logging:
+  level: "INFO"                           # Nível de log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  file: "scraper.log"                     # Nome do arquivo de log
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+**Níveis de Log:**
+
+| Nível | Quando usar | Exemplo |
+|---|---|---|
+| `DEBUG` | Debugging detalhado | Valores de variáveis, passos internos |
+| `INFO` | Operação normal (padrão) | "Iniciando scraper", "50 imóveis encontrados" |
+| `WARNING` | Situações inesperadas mas toleradas | Elementos não encontrados |
+| `ERROR` | Erros que impactam execução | Falha ao conectar ao Telegram |
+| `CRITICAL` | Erros críticos que param execução | Falha ao ler config.yaml |
+
+**Exemplo para debugging:**
+
+```yaml
+logging:
+  level: "DEBUG"  # Muito verboso, mostra tudo
+  file: "scraper.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+---
+
+### Seção: `database` - Banco de Dados SQLite
+
+Configura armazenamento de dados.
+
+```yaml
+database:
+  path: "database.db"                     # Caminho do arquivo SQLite
+  cleanup_days: 90                        # Deletar registros com mais de 90 dias
+```
+
+**O que fazer se o banco ficar muito grande:**
+- Diminua `cleanup_days` para deletar dados mais antigos
+- Ou apague manualmente: `rm database.db` (reseta o histórico)
+
+---
+
+### Seção: `urls` - URLs do Portal
+
+**Não altere esta seção** a menos que a Caixa mude o endereço do portal.
+
+```yaml
+urls:
+  base_url: "https://venda-imoveis.caixa.gov.br"
+  search_page: "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
+```
+
+---
+
+## 🎯 Exemplos de Configuração Comum
+
+### Ejemplo 1: Monitorar Curitiba - Apenas Tarumã até R$ 150.000
+
+```yaml
+busca:
+  estado: "PR"
+  cidades:
+    - nome: "Curitiba"
+      codigo: "6143"
+  modalidades: [33, 34]
+
+filtros:
+  preco_maximo: 150000.00
+  cidades_alvo:
+    - "Curitiba"
+  bairros_alvo:
+    - "TARUMÃ"
+
+playwright:
+  headless: true
+  timeout: 30000
+  wait_between_requests: 2
+  max_retries: 3
+```
+
+### Ejemplo 2: Monitorar Toda Región - Sem Filtro de Preço
+
+```yaml
+busca:
+  estado: "PR"
+  cidades:
+    - nome: "Curitiba"
+      codigo: "6143"
+    - nome: "Pinhais"
+      codigo: "6578"
+    - nome: "São José dos Pinhais"
+      codigo: "6794"
+    - nome: "Cascavel"
+      codigo: "6068"
+  modalidades: [33, 34]
+
+filtros:
+  preco_maximo: 999999999.00
+  cidades_alvo: []  # Alerta de TODAS as ciudades
+  bairros_alvo: []  # Alerta de TODOS os bairros
+
+logging:
+  level: "INFO"
+```
+
+### Exemplo 3: Debug - Tudo Detalhado
+
+```yaml
+# ... mesmas configs acima ...
+
+logging:
+  level: "DEBUG"  # Mostra TUDO que está acontecendo
+  file: "scraper_debug.log"
+
+playwright:
+  headless: false  # Mostra janela do navegador
+  timeout: 60000   # Mais tempo para você acompanhar
+  wait_between_requests: 5
+```
+
+---
+
+## ⚙️ Usando Variáveis de Ambiente vs. config.yaml
+
+**Configuração do scraper vem de 3 fontes (ordem de prioridade):**
+
+1. **Variáveis de ambiente** (`.env`) - Maior prioridade
+2. **config.yaml** - Prioridade média
+3. **Defaults no código** - Menor prioridade
+
+**Quando usar cada uma:**
+
+- **`.env`**: Dados sensíveis (token Telegram, credenciais)
+- **`config.yaml`**: Parâmetros de busca e filtros que mudam frequentemente
+- **Código**: Defaults que raramente mudam
+
+**Exemplo: Override via .env**
+
+Se você quer temporariamente mudar o nível de log sem editar `config.yaml`:
+
+```bash
+# Terminal
+export DEBUG=true
+python scraper.py
+
+# Ou em .env (permanente)
+DEBUG=true
+```
+
+---
+
+#### Usando systemd timer (Alternativa moderna para VPS)
 
 ## 📊 Estrutura de Dados
 
@@ -298,6 +618,20 @@ SELECTORS = {
 - Verificar se os seletores CSS ainda são válidos
 - Usar DevTools para inspecionar página
 - Aumentar `wait_between_requests` em config.yaml
+
+### "Imóveis com preço R$ 0 aparecem"
+- Estes são automaticamente **DESCARTADOS** (filtro ativo)
+- Verificar logs em `scraper.log` para ver quais foram rejeitados
+- Para ver detalhadamente por que um imóvel tem preço 0:
+  1. Ativar DEBUG mode em `.env`: `DEBUG=true`
+  2. Ou em `config.yaml`: `logging.level: "DEBUG"`
+  3. Executar: `python scraper.py`
+  4. Ver logs: `grep "Preço extraído como 0.0" scraper.log`
+
+**Possíveis causas:**
+- Imóvel ainda não tem preço definido no portal
+- Preço estava em formato diferente não reconhecido
+- Campo de preço vazio no HTML
 
 ### "Mensagens não chegam no Telegram"
 - Verificar TOKEN e CHAT_ID em `.env`

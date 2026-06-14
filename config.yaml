@@ -5,35 +5,38 @@
 # Configurações de Busca no Portal da Caixa
 busca:
   estado: "PR"
-  # Mapeamento de Cidades (Nome: Código IBGE)
+  # Mapeamento de Cidades (Nome: Código Portal Caixa)
   cidades:
     - nome: "Curitiba"
-      codigo: "410690"
+      codigo: "6143"
+    - nome: "Cascavel"
+      codigo: "6068"
     - nome: "Pinhais"
-      codigo: "411915"
-  # Modalidades desejadas: 33 (Venda Online), 34 (Venda Direta Online)
-  modalidades: [33, 34]
+      codigo: "6578"
+    - nome: "São José dos Pinhais"
+      codigo: "6794"
+    - nome: "Foz do Iguaçu"
+      codigo: "6220"
+  # Modalidades desejadas: 14 (Leilão SFI - Edital Único)
+  modalidades: [14, 33, 34]
 
 # Filtros aplicados em memória após a raspagem
 filtros:
-  preco_maximo: 200000.00
-  bairros_alvo:
-    - "TARUMÃ"
-    - "BAIRRO ALTO"
-    - "CAPÃO DA IMBUIA"
-    - "ALTO TARUMÃ"
+  preco_maximo: 999999999.00  # Sin límite de precio
+  cidades_alvo: []            # Sin restricción de ciudades - guardar TODAS
+  bairros_alvo: []            # Sin restricción de bairros - guardar TODOS
 
 # Configurações do Playwright
 playwright:
   headless: true
   # Timeout em ms para esperar elementos
-  timeout: 10000
+  timeout: 30000
   # Tempo de espera entre requisições (em segundos)
   wait_between_requests: 2
   # Número máximo de tentativas para carregar a página
   max_retries: 3
-  # User-Agent customizado
-  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+  # User-Agent customizado para parecer navegador real
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Configurações de Logging
 logging:
@@ -50,4 +53,4 @@ database:
 # URLs do Portal
 urls:
   base_url: "https://venda-imoveis.caixa.gov.br"
-  search_page: "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp"
+  search_page: "https://venda-imoveis.caixa.gov.br/sistema/busca-imovel.asp?sltTipoBusca=imoveis"
