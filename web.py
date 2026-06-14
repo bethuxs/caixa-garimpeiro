@@ -416,9 +416,22 @@ def link_imovel(id_imovel):
         <head>
             <title>Carregando detalhes...</title>
             <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f0f0; }}
+                .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                h1 {{ color: #333; font-size: 24px; margin-bottom: 10px; }}
+                p {{ color: #666; margin-bottom: 20px; }}
+                .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }}
+                @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+            </style>
         </head>
         <body>
-            <p>Carregando detalhes do imóvel {id_imovel}...</p>
+            <div class="container">
+                <h1>🔄 Carregando detalhes...</h1>
+                <p>Redirecionando para a página de detalhes do imóvel {id_imovel}</p>
+                <div class="spinner"></div>
+                <p style="font-size: 12px; color: #999; margin-top: 30px;">Se não for redirecionado automaticamente, <a href="#" onclick="document.getElementById('frmlista').submit(); return false;">clique aqui</a></p>
+            </div>
             
             <form id="frmlista" method="POST" action="https://venda-imoveis.caixa.gov.br/sistema/venda-online/detalhe-imovel.asp" style="display:none;">
                 <input type="hidden" id="hdnimovel" name="hdnimovel" value="{imovel.get('id_imovel', id_imovel)}">
@@ -439,11 +452,26 @@ def link_imovel(id_imovel):
             </form>
             
             <script>
-            // Enviar el formulario automáticamente (simula detalhe_imovel())
-            // Esperar a que el DOM esté listo
-            setTimeout(function() {{
-                document.getElementById('frmlista').submit();
-            }}, 500);
+            // Función para hacer submit del formulario
+            function submitForm() {{
+                var form = document.getElementById('frmlista');
+                if (form) {{
+                    console.log('Enviando formulario POST a Caixa...');
+                    form.submit();
+                }} else {{
+                    console.error('Formulario no encontrado');
+                }}
+            }}
+            
+            // Esperar a que el documento esté completamente cargado
+            if (document.readyState === 'loading') {{
+                document.addEventListener('DOMContentLoaded', function() {{
+                    setTimeout(submitForm, 300);
+                }});
+            }} else {{
+                // El documento ya está cargado
+                setTimeout(submitForm, 300);
+            }}
             </script>
         </body>
         </html>
