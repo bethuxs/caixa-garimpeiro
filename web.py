@@ -96,6 +96,20 @@ def validar_sync_token():
     return None
 
 
+SORT_OPTIONS = {
+    "data_insercao": ("data_insercao", "DESC"),
+    "data_insercao_desc": ("data_insercao", "DESC"),
+    "preco": ("preco", "ASC"),
+    "preco_asc": ("preco", "ASC"),
+    "preco_desc": ("preco", "DESC"),
+    "bairro": ("bairro", "ASC"),
+    "bairro_asc": ("bairro", "ASC"),
+    "cidade": ("cidade", "ASC"),
+    "cidade_asc": ("cidade", "ASC"),
+    "id_imovel": ("id_imovel", "ASC"),
+}
+
+
 # ============================================================================
 # ROTAS DA API
 # ============================================================================
@@ -145,6 +159,7 @@ def api_imoveis():
         limit = request.args.get("limit", 20, type=int)
         bairro = request.args.get("bairro", "").upper()
         cidade = request.args.get("cidade", "").upper()
+        modalidade = request.args.get("modalidade", "").strip()
         preco_min = request.args.get("preco_min", 0, type=float)
         preco_max = request.args.get("preco_max", 999999999, type=float)
         ordenar = request.args.get("ordenar", "data_insercao", type=str)
@@ -155,32 +170,40 @@ def api_imoveis():
         cursor = conn.cursor()
         
         # Query base - SOLO INMUEBLES ACTIVOS
-        query = "SELECT * FROM imoveis WHERE activo = 1 AND preco >= ? AND preco <= ?"
+        filtros_sql = ["activo = 1", "preco >= ?", "preco <= ?"]
         params = [preco_min, preco_max]
         
         # Filtro por ciudad
         if cidade:
-            query += " AND cidade LIKE ?"
+            filtros_sql.append("UPPER(cidade) LIKE ?")
             params.append(f"%{cidade}%")
         
         # Filtro por bairro
         if bairro:
-            query += " AND bairro LIKE ?"
+            filtros_sql.append("UPPER(bairro) LIKE ?")
             params.append(f"%{bairro}%")
+
+        # Filtro por modalidad
+        if modalidade:
+            filtros_sql.append("UPPER(COALESCE(modalidade, '')) = ?")
+            params.append(modalidade.upper())
         
         # Ordenación
-        ordem_permitidas = ["data_insercao", "preco", "bairro", "id_imovel", "cidade"]
-        if ordenar not in ordem_permitidas:
-            ordenar = "data_insercao"
-        
-        query += f" ORDER BY {ordenar} DESC"
+        order_col, order_dir = SORT_OPTIONS.get(ordenar, SORT_OPTIONS["data_insercao"])
+        where_sql = " WHERE " + " AND ".join(filtros_sql)
         
         # Contar total
-        count_query = query.replace("SELECT *", "SELECT COUNT(*) as total")
+        count_query = f"SELECT COUNT(*) as total FROM imoveis{where_sql}"
         cursor.execute(count_query, params)
         total = cursor.fetchone()["total"]
         
         # Buscar datos
+        query = f"""
+            SELECT *
+            FROM imoveis
+            {where_sql}
+            ORDER BY {order_col} {order_dir}, id_imovel ASC
+        """
         query += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor.execute(query, params)
@@ -336,6 +359,32 @@ def api_cidades():
             "sucesso": True,
             "cidades": cidades,
             "total": len(cidades)
+        })
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+@app.route("/api/modalidades")
+def api_modalidades():
+    """API para listar modalidades únicas."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT modalidade
+            FROM imoveis
+            WHERE activo = 1
+              AND modalidade IS NOT NULL
+              AND TRIM(modalidade) != ''
+            ORDER BY modalidade
+        """)
+        modalidades = [row["modalidade"] for row in cursor.fetchall()]
+        conn.close()
+
+        return jsonify({
+            "sucesso": True,
+            "modalidades": modalidades,
+            "total": len(modalidades)
         })
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500

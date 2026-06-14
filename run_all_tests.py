@@ -50,7 +50,9 @@ def main():
         "test_loop_structure.py",
         "test_loop_behavior.py",
         "test_scraper_extraction.py",
+        "test_retry_pending.py",
         "test_web_security.py",
+        "test_web_filters.py",
     ]
     
     # Verificar que existen
@@ -88,8 +90,10 @@ def main():
         print("🎉 ¡TODOS LOS TESTS PASARON!")
         print("\nValidaciones principales:")
         print("  ✓ Búsqueda independiente por ciudad/modalidade")
+        print("  ✓ Timeouts reintentados al final de la corrida")
         print("  ✓ Extracción real de precio, bairro y modalidade")
         print("  ✓ API de sincronización protegida por token")
+        print("  ✓ Filtros web por modalidad y precio ascendente")
         print("  ✓ Endpoint debug oculto fuera de FLASK_DEBUG=true")
         print("\n")
         return 0

@@ -64,6 +64,13 @@
             </div>
 
             <div class="filtro-grupo">
+                <label for="filtro-modalidade">Modalidade:</label>
+                <select id="filtro-modalidade">
+                    <option value="">Todas</option>
+                </select>
+            </div>
+
+            <div class="filtro-grupo">
                 <label for="filtro-preco-min">Preço Mínimo (R$):</label>
                 <input type="number" id="filtro-preco-min" placeholder="0" min="0">
             </div>
@@ -76,10 +83,11 @@
             <div class="filtro-grupo">
                 <label for="filtro-ordenar">Ordenar por:</label>
                 <select id="filtro-ordenar">
-                    <option value="data_insercao">Mais Recentes</option>
-                    <option value="preco">Menor Preço</option>
-                    <option value="bairro">Bairro (A-Z)</option>
-                    <option value="cidade">Cidade (A-Z)</option>
+                    <option value="data_insercao_desc">Mais Recentes</option>
+                    <option value="preco_asc">Menor Preço</option>
+                    <option value="preco_desc">Maior Preço</option>
+                    <option value="bairro_asc">Bairro (A-Z)</option>
+                    <option value="cidade_asc">Cidade (A-Z)</option>
                 </select>
             </div>
 
@@ -163,14 +171,16 @@
     let filtrosBuscaAtivos = {
         cidade: '',
         bairro: '',
+        modalidade: '',
         preco_min: 0,
         preco_max: 999999999,
-        ordenar: 'data_insercao'
+        ordenar: 'data_insercao_desc'
     };
 
     document.addEventListener('DOMContentLoaded', function() {
         carregarCidades();
         carregarBairros();
+        carregarModalidades();
         carregarEstatisticas();
         carregarImoveis();
 
@@ -183,16 +193,18 @@
         document.getElementById('btn-limpar').addEventListener('click', () => {
             document.getElementById('filtro-cidade').value = '';
             document.getElementById('filtro-bairro').value = '';
+            document.getElementById('filtro-modalidade').value = '';
             document.getElementById('filtro-preco-min').value = '';
             document.getElementById('filtro-preco-max').value = '';
-            document.getElementById('filtro-ordenar').value = 'data_insercao';
+            document.getElementById('filtro-ordenar').value = 'data_insercao_desc';
             paginaAtual = 1;
             filtrosBuscaAtivos = {
                 cidade: '',
                 bairro: '',
+                modalidade: '',
                 preco_min: 0,
                 preco_max: 999999999,
-                ordenar: 'data_insercao'
+                ordenar: 'data_insercao_desc'
             };
             carregarImoveis();
         });

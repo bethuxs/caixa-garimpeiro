@@ -25,12 +25,14 @@ Versão: 1.0.0
 """
 
 import asyncio
+import html as html_lib
 import logging
 import os
 import random
 import re
 import sqlite3
 import sys
+import unicodedata
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -762,6 +764,10 @@ class CaixaScraper:
         "34": "Venda Direta Online",
     }
 
+    FORM_STATUS_OK = "ok"
+    FORM_STATUS_TIMEOUT = "timeout"
+    FORM_STATUS_FAILED = "failed"
+
     # Seletores CSS do portal (podem mudar com atualizações do site)
     SELECTORS = {
         "estado": "#cmb_estado",
@@ -853,6 +859,25 @@ class CaixaScraper:
         return self.MODALIDADES_MAP.get(str(modalidade), f"Modalidade {modalidade}")
 
     @staticmethod
+    def _normalizar_texto_pagina(texto: str) -> str:
+        """Normaliza texto/HTML para comparar mensajes del portal."""
+        texto_decodificado = html_lib.unescape(texto or "")
+        texto_sem_acentos = unicodedata.normalize("NFKD", texto_decodificado)
+        texto_sem_acentos = "".join(
+            char for char in texto_sem_acentos
+            if not unicodedata.combining(char)
+        )
+        return re.sub(r"\s+", " ", texto_sem_acentos).lower()
+
+    def _page_indica_sem_resultados(self, html_content: str) -> bool:
+        """Detecta mensajes del portal que significan búsqueda concluida sin inmuebles."""
+        texto = self._normalizar_texto_pagina(html_content)
+        return any(frase in texto for frase in (
+            "nenhum resultado",
+            "nenhum imovel encontrado",
+        ))
+
+    @staticmethod
     def _parse_titulo_localizacao(titulo: str, cidade_fallback: str = "") -> Tuple[str, str]:
         """
         Parseia títulos del portal como "CURITIBA - TINGUI".
@@ -885,6 +910,7 @@ class CaixaScraper:
         """
         imoveis_totales = []
         escopos_completos: List[Tuple[str, str]] = []
+        pendientes_timeout: List[Tuple[Dict[str, Any], Union[str, int]]] = []
         
         try:
             url_busca = self.config.get("urls", {}).get(
@@ -915,34 +941,46 @@ class CaixaScraper:
                     )
                     self.logger.info(f"{'='*60}")
 
-                    try:
-                        await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
-                        await asyncio.sleep(2)
-
-                        formulario_ok = await self._preencher_formulario_multistep(
-                            cidade_info=cidade_info,
-                            modalidade=modalidade
+                    imoveis, escopo, status = await self._executar_busca_combinacao(
+                        url_busca=url_busca,
+                        cidade_info=cidade_info,
+                        modalidade=modalidade
+                    )
+                    if status == self.FORM_STATUS_TIMEOUT:
+                        pendientes_timeout.append((cidade_info, modalidade))
+                        self.logger.warning(
+                            f"Búsqueda pendiente por timeout: {nome_cidade} - {modalidade_nome}"
                         )
-                        if not formulario_ok:
-                            self.logger.warning(
-                                f"Búsqueda omitida por fallo en formulario: {nome_cidade} - {modalidade_nome}"
-                            )
-                            continue
+                        continue
 
-                        imoveis = await self._extrair_imoveis(
-                            cidade_atual=nome_cidade,
-                            modalidade_atual=modalidade_nome
-                        )
+                    if escopo:
                         imoveis_totales.extend(imoveis)
-                        escopos_completos.append((nome_cidade, modalidade_nome))
-                        self.logger.info(
-                            f"✓ Encontrados {len(imoveis)} inmuebles en {nome_cidade} - {modalidade_nome}"
-                        )
-                    except Exception as e:
-                        self.logger.error(
-                            f"Error en búsqueda {nome_cidade} - {modalidade_nome}: {e}",
-                            exc_info=True
-                        )
+                        escopos_completos.append(escopo)
+
+            if pendientes_timeout:
+                self.logger.warning(
+                    f"\nREINTENTANDO {len(pendientes_timeout)} búsqueda(s) pendiente(s) por timeout"
+                )
+
+            for cidade_info, modalidade in pendientes_timeout:
+                nome_cidade = cidade_info.get("nome", "")
+                modalidade_nome = self._modalidade_nome(modalidade)
+                imoveis, escopo, status = await self._executar_busca_combinacao(
+                    url_busca=url_busca,
+                    cidade_info=cidade_info,
+                    modalidade=modalidade,
+                    tentativa="reintento"
+                )
+
+                if status == self.FORM_STATUS_TIMEOUT:
+                    self.logger.error(
+                        f"Timeout agotado tras reintento: {nome_cidade} - {modalidade_nome}"
+                    )
+                    continue
+
+                if escopo:
+                    imoveis_totales.extend(imoveis)
+                    escopos_completos.append(escopo)
             
             self.logger.info(f"\n{'='*70}")
             self.logger.info(f"✓ BÚSQUEDA COMPLETADA: {len(imoveis_totales)} inmuebles encontrados")
@@ -955,12 +993,72 @@ class CaixaScraper:
         
         return imoveis_totales, escopos_completos
 
+    async def _executar_busca_combinacao(
+        self,
+        url_busca: str,
+        cidade_info: Dict[str, Any],
+        modalidade: Union[str, int],
+        tentativa: str = "principal"
+    ) -> Tuple[List[Imovel], Optional[Tuple[str, str]], str]:
+        """Ejecuta una combinación ciudad-modalidad y reporta su estado."""
+        nome_cidade = cidade_info.get("nome", "")
+        codigo_cidade = cidade_info.get("codigo")
+        modalidade_nome = self._modalidade_nome(modalidade)
+        sufixo_tentativa = " (reintento)" if tentativa != "principal" else ""
+
+        try:
+            await self.page.goto(url_busca, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(2)
+
+            status = await self._preencher_formulario_multistep(
+                cidade_info=cidade_info,
+                modalidade=modalidade
+            )
+
+            if status == self.FORM_STATUS_TIMEOUT:
+                self.logger.warning(
+                    f"Timeout esperando resultados{sufixo_tentativa}: "
+                    f"{nome_cidade} ({codigo_cidade}) - {modalidade_nome}"
+                )
+                return [], None, self.FORM_STATUS_TIMEOUT
+
+            if status != self.FORM_STATUS_OK:
+                self.logger.warning(
+                    f"Búsqueda omitida por fallo en formulario{sufixo_tentativa}: "
+                    f"{nome_cidade} - {modalidade_nome}"
+                )
+                return [], None, self.FORM_STATUS_FAILED
+
+            imoveis = await self._extrair_imoveis(
+                cidade_atual=nome_cidade,
+                modalidade_atual=modalidade_nome
+            )
+            self.logger.info(
+                f"✓ Encontrados {len(imoveis)} inmuebles en "
+                f"{nome_cidade} - {modalidade_nome}{sufixo_tentativa}"
+            )
+            return imoveis, (nome_cidade, modalidade_nome), self.FORM_STATUS_OK
+
+        except PlaywrightTimeoutError as e:
+            self.logger.warning(
+                f"Timeout de Playwright{sufixo_tentativa} en "
+                f"{nome_cidade} - {modalidade_nome}: {e}"
+            )
+            return [], None, self.FORM_STATUS_TIMEOUT
+
+        except Exception as e:
+            self.logger.error(
+                f"Error en búsqueda{sufixo_tentativa} {nome_cidade} - {modalidade_nome}: {e}",
+                exc_info=True
+            )
+            return [], None, self.FORM_STATUS_FAILED
+
 
     async def _preencher_formulario_multistep(
         self,
         cidade_info: Dict[str, Any],
         modalidade: Union[str, int]
-    ) -> bool:
+    ) -> str:
         """Preenche e submete o formulário multi-step para una ciudad/modalidad."""
         try:
             busca_config = self.config.get("busca", {})
@@ -994,7 +1092,7 @@ class CaixaScraper:
             btn_next0 = await self.page.query_selector("#btn_next0")
             if not btn_next0:
                 self.logger.warning("  Botón #btn_next0 no encontrado")
-                return False
+                return self.FORM_STATUS_FAILED
             await btn_next0.click()
             await async_sleep_random(1.5, 2.5)
 
@@ -1005,7 +1103,7 @@ class CaixaScraper:
             btn_next1 = await self.page.query_selector("#btn_next1")
             if not btn_next1:
                 self.logger.warning("  Botón #btn_next1 no encontrado")
-                return False
+                return self.FORM_STATUS_FAILED
             await btn_next1.click()
             await async_sleep_random(1.5, 2.5)
 
@@ -1058,7 +1156,7 @@ class CaixaScraper:
             btn_next2 = await self.page.query_selector("#btn_next2")
             if not btn_next2:
                 self.logger.warning("  Botón #btn_next2 no encontrado")
-                return False
+                return self.FORM_STATUS_FAILED
 
             await btn_next2.click()
 
@@ -1067,19 +1165,23 @@ class CaixaScraper:
                 items = await self.page.query_selector_all("li.group-block-item")
                 if items:
                     self.logger.info(f"  ✓ Resultados cargados: {len(items)} items")
-                    return True
+                    return self.FORM_STATUS_OK
 
                 html = await self.page.content()
-                if "Nenhum Resultado" in html or "nenhum resultado" in html.lower():
+                if self._page_indica_sem_resultados(html):
                     self.logger.info("  ✓ Búsqueda concluida sin resultados")
-                    return True
+                    return self.FORM_STATUS_OK
 
             self.logger.warning("  Resultados no detectados dentro del timeout")
-            return False
+            return self.FORM_STATUS_TIMEOUT
+
+        except PlaywrightTimeoutError as e:
+            self.logger.warning(f"Timeout ao preencher formulário: {e}")
+            return self.FORM_STATUS_TIMEOUT
 
         except Exception as e:
             self.logger.error(f"Erro ao preencher formulário: {e}")
-            return False
+            return self.FORM_STATUS_FAILED
 
     async def _extrair_imoveis(
         self,
@@ -1174,8 +1276,8 @@ class CaixaScraper:
                 # Si no encontramos items, verificar si es "no resultados"
                 if not linhas:
                     page_html = await self.page.content()
-                    if "Nenhum Resultado" in page_html or "nenhum resultado" in page_html.lower():
-                        self.logger.warning("Página indica: Nenhum resultado encontrado")
+                    if self._page_indica_sem_resultados(page_html):
+                        self.logger.info("Página indica: ningún inmueble encontrado para el filtro")
                         break
                     
                     if self._debug_enabled():

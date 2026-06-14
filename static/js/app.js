@@ -65,6 +65,25 @@ async function carregarBairros() {
     }
 }
 
+async function carregarModalidades() {
+    try {
+        const response = await fetch('/api/modalidades');
+        const data = await response.json();
+
+        if (data.sucesso) {
+            const select = document.getElementById('filtro-modalidade');
+            data.modalidades.forEach(modalidade => {
+                const option = document.createElement('option');
+                option.value = modalidade;
+                option.textContent = modalidade;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Erro ao carregar modalidades:', error);
+    }
+}
+
 async function carregarImoveis() {
     try {
         const params = new URLSearchParams({
@@ -72,9 +91,10 @@ async function carregarImoveis() {
             limit: imovelsPorPagina,
             cidade: filtrosBuscaAtivos.cidade || '',
             bairro: filtrosBuscaAtivos.bairro || '',
+            modalidade: filtrosBuscaAtivos.modalidade || '',
             preco_min: filtrosBuscaAtivos.preco_min || 0,
             preco_max: filtrosBuscaAtivos.preco_max || 999999999,
-            ordenar: filtrosBuscaAtivos.ordenar || 'data_insercao'
+            ordenar: filtrosBuscaAtivos.ordenar || 'data_insercao_desc'
         });
 
         const response = await fetch(`/api/imoveis?${params}`);
@@ -179,6 +199,7 @@ function atualizarPaginacao(total) {
 function aplicarFiltros() {
     filtrosBuscaAtivos.cidade = document.getElementById('filtro-cidade').value;
     filtrosBuscaAtivos.bairro = document.getElementById('filtro-bairro').value;
+    filtrosBuscaAtivos.modalidade = document.getElementById('filtro-modalidade').value;
     filtrosBuscaAtivos.preco_min = 
         parseFloat(document.getElementById('filtro-preco-min').value) || 0;
     filtrosBuscaAtivos.preco_max = 

@@ -39,6 +39,19 @@ class TestLoopStructure(unittest.TestCase):
 
         self.assertIn("for cidade_info in cidades:", block)
         self.assertIn("for mod_index, modalidade in enumerate(modalidades", block)
+        self.assertIn("await self._executar_busca_combinacao(", block)
+        self.assertIn("pendientes_timeout.append((cidade_info, modalidade))", block)
+        self.assertIn('tentativa="reintento"', block)
+        self.assertIn("escopos_completos.append(escopo)", block)
+
+    def test_helper_ejecuta_una_combinacion(self):
+        content = read_scraper()
+        block = function_block(
+            content,
+            "async def _executar_busca_combinacao",
+            "async def _preencher_formulario_multistep",
+        )
+
         self.assertIn("await self.page.goto(url_busca", block)
         self.assertIn("await self._preencher_formulario_multistep(", block)
         self.assertIn("cidade_info=cidade_info", block)
@@ -46,7 +59,9 @@ class TestLoopStructure(unittest.TestCase):
         self.assertIn("await self._extrair_imoveis(", block)
         self.assertIn("cidade_atual=nome_cidade", block)
         self.assertIn("modalidade_atual=modalidade_nome", block)
-        self.assertIn("escopos_completos.append((nome_cidade, modalidade_nome))", block)
+        self.assertIn("return imoveis, (nome_cidade, modalidade_nome)", block)
+        self.assertIn("FORM_STATUS_TIMEOUT", block)
+        self.assertIn("PlaywrightTimeoutError", block)
 
     def test_formulario_helper_no_tiene_loops_globales(self):
         content = read_scraper()
@@ -64,6 +79,9 @@ class TestLoopStructure(unittest.TestCase):
         self.assertIn("btn_next0", block)
         self.assertIn("btn_next1", block)
         self.assertIn("btn_next2", block)
+        self.assertIn("FORM_STATUS_OK", block)
+        self.assertIn("FORM_STATUS_TIMEOUT", block)
+        self.assertIn("FORM_STATUS_FAILED", block)
 
     def test_extraccion_usa_html_real_de_caixa(self):
         content = read_scraper()
