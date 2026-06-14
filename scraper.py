@@ -1488,9 +1488,11 @@ class CaixaScraper:
             return None
 
     @staticmethod
+    @staticmethod
     def _extrair_preco(texto: str) -> float:
         """
         Extrai valor numérico de preço de uma string.
+        Prioriza "Valor mínimo de venda" sobre "Valor de avaliação".
 
         Args:
             texto: String contendo o preço formatado
@@ -1498,11 +1500,33 @@ class CaixaScraper:
         Returns:
             Valor do preço em float
         """
+        if not texto:
+            return 0.0
+        
         try:
-            # Remove tudo exceto números e ponto/vírgula
-            numeros = re.sub(r"[^0-9,.\s]", "", texto)
+            # Limpieza inicial
+            texto_limpio = texto.strip()
             
-            # Se houver múltiplos separadores, assume vírgula como decimal
+            # PREFERENCIA 1: Extraer "Valor mínimo de venda" (lo que se paga realmente)
+            # Formato: "Valor mínimo de venda: R$ 1.453.076,60"
+            match_minimo = re.search(r"Valor\s+mínimo\s+de\s+venda:\s*R\$\s*([\d.]+,\d+)", texto_limpio)
+            if match_minimo:
+                valor_str = match_minimo.group(1)
+                valor = float(valor_str.replace(".", "").replace(",", "."))
+                return valor
+            
+            # PREFERENCIA 2: Extraer "Valor de avaliação" (si no hay mínimo)
+            # Formato: "Valor de avaliação: R$ 2.280.000,00"
+            match_avaliacao = re.search(r"Valor\s+de\s+avaliação:\s*R\$\s*([\d.]+,\d+)", texto_limpio)
+            if match_avaliacao:
+                valor_str = match_avaliacao.group(1)
+                valor = float(valor_str.replace(".", "").replace(",", "."))
+                return valor
+            
+            # FALLBACK: Método genérico si no encuentra ninguno de los anteriores
+            numeros = re.sub(r"[^0-9,.\s]", "", texto_limpio)
+            
+            # Si houver múltiplos separadores, assume vírgula como decimal
             if numeros.count(",") > 1:
                 numeros = numeros.replace(".", "").replace(",", ".")
             elif numeros.count(".") > 1:
@@ -1512,6 +1536,7 @@ class CaixaScraper:
                 numeros = numeros.replace(".", "").replace(",", ".")
             
             return float(numeros) if numeros else 0.0
+            
         except (ValueError, AttributeError):
             return 0.0
 
