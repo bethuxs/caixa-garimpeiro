@@ -397,12 +397,16 @@ def link_imovel(id_imovel):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ?", (id_imovel,))
-        imovel = cursor.fetchone()
+        cursor.execute("SELECT * FROM imoveis WHERE id_imovel = ? AND activo = 1", (id_imovel,))
+        row = cursor.fetchone()
         conn.close()
         
-        if not imovel:
+        if not row:
             return render_template("404.html"), 404
+        
+        # Convertir row a diccionario usando cursor.description
+        cols_names = [description[0] for description in cursor.description]
+        imovel = dict(zip(cols_names, row))
         
         # Retornar HTML con formulario auto-submit que simula detalhe_imovel()
         html = f"""
@@ -416,16 +420,16 @@ def link_imovel(id_imovel):
             <p>Carregando detalhes do imóvel {id_imovel}...</p>
             
             <form id="frmlista" method="POST" action="https://venda-imoveis.caixa.gov.br/sistema/venda-online/detalhe-imovel.asp" style="display:none;">
-                <input type="hidden" id="hdnimovel" name="hdnimovel" value="{id_imovel}">
-                <input type="hidden" id="hdn_estado" name="hdn_estado" value="">
-                <input type="hidden" id="hdn_cidade" name="hdn_cidade" value="">
-                <input type="hidden" id="hdn_modalidade" name="hdn_modalidade" value="">
+                <input type="hidden" id="hdnimovel" name="hdnimovel" value="{imovel.get('id_imovel', id_imovel)}">
+                <input type="hidden" id="hdn_estado" name="hdn_estado" value="PR">
+                <input type="hidden" id="hdn_cidade" name="hdn_cidade" value="{imovel.get('cidade', '')}">
+                <input type="hidden" id="hdn_modalidade" name="hdn_modalidade" value="{imovel.get('modalidade', '')}">
                 <input type="hidden" id="hdn_tp_imovel" name="hdn_tp_imovel" value="">
                 <input type="hidden" id="hdn_quartos" name="hdn_quartos" value="">
                 <input type="hidden" id="hdn_vg_garagem" name="hdn_vg_garagem" value="">
                 <input type="hidden" id="hdn_area_util" name="hdn_area_util" value="">
                 <input type="hidden" id="hdn_faixa_vlr" name="hdn_faixa_vlr" value="">
-                <input type="hidden" id="hdn_vlr_maximo" name="hdn_vlr_maximo" value="">
+                <input type="hidden" id="hdn_vlr_maximo" name="hdn_vlr_maximo" value="{imovel.get('preco', '')}">
                 <input type="hidden" id="hdnValorSimulador" name="hdnValorSimulador" value="">
                 <input type="hidden" id="hdnAceitaFGTS" name="hdnAceitaFGTS" value="">
                 <input type="hidden" id="hdnAceitaFinanciamento" name="hdnAceitaFinanciamento" value="">
@@ -435,7 +439,10 @@ def link_imovel(id_imovel):
             
             <script>
             // Enviar el formulario automáticamente (simula detalhe_imovel())
-            document.getElementById('frmlista').submit();
+            // Esperar a que el DOM esté listo
+            setTimeout(function() {{
+                document.getElementById('frmlista').submit();
+            }}, 500);
             </script>
         </body>
         </html>

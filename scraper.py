@@ -27,6 +27,7 @@ Versão: 1.0.0
 import asyncio
 import logging
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -82,6 +83,37 @@ def setup_logging(config: Dict[str, Any]) -> logging.Logger:
     logger.addHandler(console_handler)
 
     return logger
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+async def async_sleep_random(min_seconds: float = 0.5, max_seconds: float = 2.0) -> None:
+    """
+    Realiza un sleep aleatorio para simular comportamiento humano.
+    
+    Esto evita detección anti-scraping que detecta patrones de sleep fijos.
+    
+    Args:
+        min_seconds: Tiempo mínimo en segundos (default: 0.5)
+        max_seconds: Tiempo máximo en segundos (default: 2.0)
+    """
+    sleep_time = random.uniform(min_seconds, max_seconds)
+    await asyncio.sleep(sleep_time)
+
+
+def sleep_random(min_seconds: float = 0.5, max_seconds: float = 2.0) -> None:
+    """
+    Sleep sincrónico aleatorio.
+    
+    Args:
+        min_seconds: Tiempo mínimo en segundos (default: 0.5)
+        max_seconds: Tiempo máximo en segundos (default: 2.0)
+    """
+    sleep_time = random.uniform(min_seconds, max_seconds)
+    import time
+    time.sleep(sleep_time)
 
 
 # ============================================================================
@@ -879,7 +911,7 @@ class CaixaScraper:
                 
                 try:
                     await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
-                    await asyncio.sleep(0.5)
+                    await async_sleep_random(0.3, 0.8)
                     
                 except Exception as e:
                     self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
@@ -1000,7 +1032,7 @@ class CaixaScraper:
             timeout = playwright_config.get("timeout", 30000)
 
             # Aguarda JavaScript inicial
-            await asyncio.sleep(3)
+            await async_sleep_random(2, 4)
             await self.page.wait_for_load_state("domcontentloaded", timeout=timeout)
 
             # ========== PASO 1: ESTADO ==========
@@ -1009,7 +1041,7 @@ class CaixaScraper:
             
             await self.page.wait_for_selector(self.SELECTORS["estado"], timeout=timeout)
             await self.page.select_option(self.SELECTORS["estado"], estado)
-            await asyncio.sleep(1)
+            await async_sleep_random(0.7, 1.5)
             
             # ========== CIUDADES - LOOP PRINCIPAL ==========
             cidades = busca_config.get("cidades", [])
@@ -1025,7 +1057,7 @@ class CaixaScraper:
                 
                 try:
                     await self.page.select_option(self.SELECTORS["cidade"], str(codigo))
-                    await asyncio.sleep(1)
+                    await async_sleep_random(0.7, 1.5)
                 except Exception as e:
                     self.logger.warning(f"Erro ao selecionar cidade {nome}: {e}")
                     continue
@@ -1038,7 +1070,7 @@ class CaixaScraper:
                     
                     try:
                         await self.page.select_option(self.SELECTORS["modalidade"], str(modalidade))
-                        await asyncio.sleep(0.5)
+                        await async_sleep_random(0.3, 0.8)
                     except Exception as e:
                         self.logger.warning(f"Erro ao selecionar modalidade {modalidade}: {e}")
                         continue
@@ -1050,24 +1082,24 @@ class CaixaScraper:
                     btn_next0 = await self.page.query_selector("#btn_next0")
                     if btn_next0:
                         await btn_next0.click()
-                        await asyncio.sleep(2)
+                        await async_sleep_random(1.5, 2.5)
                     else:
                         self.logger.warning("  Botón #btn_next0 no encontrado")
                         continue
             
 # ========== PASO 2: Sin filtros restrictivos ==========
                     self.logger.info("  Paso 2: Sin filtros restrictivos (trae TODOS los resultados)")
-                    await asyncio.sleep(1)
+                    await async_sleep_random(0.7, 1.3)
                     
                     # CLICK PRÓXIMO (Paso 2 -> 3)
-                    await asyncio.sleep(1)
+                    await async_sleep_random(0.7, 1.3)
                     btn_next1 = await self.page.query_selector("#btn_next1")
                     if not btn_next1:
                         self.logger.warning("  Botón #btn_next1 no encontrado")
                         continue
                         
                     await btn_next1.click()
-                    await asyncio.sleep(2)
+                    await async_sleep_random(1.5, 2.5)
                     
                     # ========== PASO 3: Rellenar dados del cliente ==========
                     self.logger.info("  Paso 3: Rellenando datos del cliente")
