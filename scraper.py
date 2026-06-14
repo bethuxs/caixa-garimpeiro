@@ -168,7 +168,7 @@ class Database:
         self._init_db()
 
     def _init_db(self) -> None:
-        """Cria as tabelas necessárias se não existirem."""
+        """Cria as tabelas necessárias se não existirem e migra se necessário."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -189,6 +189,20 @@ class Database:
                     activo INTEGER DEFAULT 1
                 )
             """)
+            
+            # MIGRACIÓN: Agregar columnas que falten a tabla existente
+            cursor.execute("PRAGMA table_info(imoveis)")
+            columns = {col[1] for col in cursor.fetchall()}
+            
+            # Agregar columna 'activo' si no existe
+            if 'activo' not in columns:
+                self.logger.info("Migrando BD: agregando columna 'activo' a tabla imoveis")
+                cursor.execute("ALTER TABLE imoveis ADD COLUMN activo INTEGER DEFAULT 1")
+            
+            # Agregar columna 'data_actualizacion' si no existe
+            if 'data_actualizacion' not in columns:
+                self.logger.info("Migrando BD: agregando columna 'data_actualizacion' a tabla imoveis")
+                cursor.execute("ALTER TABLE imoveis ADD COLUMN data_actualizacion TIMESTAMP")
             
             # Índices para otimizar consultas
             cursor.execute("""
@@ -223,7 +237,7 @@ class Database:
             """)
             
             conn.commit()
-            self.logger.info(f"Banco de dados inicializado: {self.db_path}")
+            self.logger.info(f"Banco de datos inicializado: {self.db_path}")
 
     def imovel_existe(self, id_imovel: str) -> bool:
         """
@@ -938,7 +952,7 @@ class CaixaScraper:
                         self.logger.warning(f"  Error al rellenar email: {e}")
                 
                 # Validar datos del formulario
-                form_values = await self.page.evaluate("""
+                form_values = await self.page.evaluate(r"""
                     () => ({
                         cpf: document.querySelector('#txtCPF').value,
                         telefone: document.querySelector('#txtTelefone').value,
@@ -1118,7 +1132,7 @@ class CaixaScraper:
                     pass
                 
                 # DEBUG: Verificar valores de formulario ANTES del clic
-                form_values = await self.page.evaluate("""
+                form_values = await self.page.evaluate(r"""
                 () => {
                     return {
                         cpf: document.getElementById('txtCPF')?.value || '',
