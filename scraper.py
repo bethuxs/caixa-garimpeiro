@@ -1000,7 +1000,7 @@ class CaixaScraper:
 
     async def _extrair_imoveis(self, cidade_atual: str = "") -> List[Imovel]:
         """
-        Extrai dados dos imóveis da página de resultados.
+        Extrai dados dos imóveis da página de resultados (con soporte para paginação).
 
         Args:
             cidade_atual: Nombre de la ciudad actual siendo buscada
@@ -1051,74 +1051,128 @@ class CaixaScraper:
             
             self.logger.info("=== FIN DEBUG ===\n")
             
-            # Intentar con varios selectores para encontrar resultados
-            selectors_to_try = [
-                "li.group-block-item",  # Priorizar items individuales
-                self.SELECTORS["linhas_imovel"],  # li.group-block-item (backup)
-                self.SELECTORS["contenedor_resultados"],  # #listaimoveispaginacao (contenedor)
-                ".resultado-busca",
-                ".resultado",
-                "div[class*='resultado']",
-                "table",
-                ".imovel",
-                "div[class*='imovel']"
-            ]
+            # MANEJO DE PAGINACIÓN - Iterar sobre todas las páginas
+            pagina_num = 1
+            max_paginas = 100  # Seguridad - máximo de páginas a procesar
             
-            contenedor_html = None
-            linhas = []
-            matched_selector = None
-            
-            for selector in selectors_to_try:
-                try:
-                    linhas = await self.page.query_selector_all(selector)
-                    if linhas:
-                        matched_selector = selector
-                        self.logger.info(f"✓ Encontrados {len(linhas)} items con selector: '{selector}'")
+            while pagina_num <= max_paginas:
+                self.logger.info(f"\n--- Procesando página {pagina_num} ---")
+                
+                # Intentar con varios selectores para encontrar resultados
+                selectors_to_try = [
+                    "li.group-block-item",  # Priorizar items individuales
+                    self.SELECTORS["linhas_imovel"],  # li.group-block-item (backup)
+                    self.SELECTORS["contenedor_resultados"],  # #listaimoveispaginacao (contenedor)
+                    ".resultado-busca",
+                    ".resultado",
+                    "div[class*='resultado']",
+                    "table",
+                    ".imovel",
+                    "div[class*='imovel']"
+                ]
+                
+                linhas = []
+                matched_selector = None
+                
+                for selector in selectors_to_try:
+                    try:
+                        linhas = await self.page.query_selector_all(selector)
+                        if linhas:
+                            matched_selector = selector
+                            self.logger.info(f"✓ Encontrados {len(linhas)} items con selector: '{selector}'")
+                            break
+                    except:
+                        continue
+                
+                # Si no encontramos items, capturar HTML para análisis
+                if not linhas:
+                    page_html = await self.page.content()
+                    
+                    # Verificar si es página de "no resultados"
+                    if "Nenhum Resultado" in page_html or "nenhum resultado" in page_html.lower() or "no results" in page_html.lower():
+                        self.logger.warning("Página indica: Nenhum resultado encontrado")
                         break
-                except:
-                    continue
-            
-            # Si no encontramos items, capturar HTML para análisis
-            if not linhas:
-                page_html = await self.page.content()
+                    
+                    # Guardar HTML para análisis
+                    with open("resultado_extraccion.html", "w", encoding="utf-8") as f:
+                        f.write(page_html)
+                    self.logger.debug("HTML completo guardado en resultado_extraccion.html")
+                    
+                    # Intentar extraer de tablas
+                    try:
+                        linhas = await self.page.query_selector_all("table tbody tr")
+                        if linhas:
+                            self.logger.info(f"✓ Encontrados {len(linhas)} items en table tbody tr")
+                    except:
+                        pass
                 
-                # Verificar si es página de "no resultados"
-                if "Nenhum Resultado" in page_html or "nenhum resultado" in page_html.lower() or "no results" in page_html.lower():
-                    self.logger.warning("Página indica: Nenhum resultado encontrado")
-                    return []
+                # Si seguimos sin resultados, salir
+                if not linhas:
+                    self.logger.warning("No se encontraron resultados en esta página")
+                    break
                 
-                # Guardar HTML para análisis
-                with open("resultado_extraccion.html", "w", encoding="utf-8") as f:
-                    f.write(page_html)
-                self.logger.debug("HTML completo guardado en resultado_extraccion.html")
+                # Extraer datos de cada fila
+                self.logger.info(f"Procesando {len(linhas)} linhas/items...")
                 
-                # Intentar extraer de tablas
+                for i, linha in enumerate(linhas):
+                    try:
+                        imovel = await self._extrair_dados_linha(linha, cidade_atual=cidade_atual)
+                        if imovel:
+                            imoveis.append(imovel)
+                            self.logger.debug(f"Imóvel {i+1} extraído: {imovel.bairro}, R$ {imovel.preco}")
+                    except Exception as e:
+                        self.logger.debug(f"Erro ao extrair dados de linha {i}: {e}")
+                        continue
+                
+                self.logger.info(f"Total acumulado en página {pagina_num}: {len(imoveis)} imóveis")
+                
+                # BUSCAR BOTÓN "PRÓXIMA" Y HACER CLICK
+                proximo_btn = None
+                botoes_proximo = [
+                    "a:has-text('Próxima')",
+                    "a:has-text('Proximo')",
+                    "button:has-text('Próxima')",
+                    "button:has-text('Proximo')",
+                    "a.proxima",
+                    "button.proxima",
+                    "a[href*='pagina']",
+                    ".paginacao a:last-child"
+                ]
+                
+                for btn_selector in botoes_proximo:
+                    try:
+                        proximo_btn = await self.page.query_selector(btn_selector)
+                        if proximo_btn:
+                            # Verificar si está deshabilitado
+                            disabled = await proximo_btn.get_attribute("disabled")
+                            if not disabled:
+                                self.logger.info(f"✓ Botón 'Próxima' encontrado: {btn_selector}")
+                                break
+                            else:
+                                proximo_btn = None
+                    except:
+                        continue
+                
+                # Si no hay botón "próxima" o está deshabilitado, salir
+                if not proximo_btn:
+                    self.logger.info("No hay más páginas (sin botón 'Próxima')")
+                    break
+                
+                # Hacer click en "Próxima"
                 try:
-                    linhas = await self.page.query_selector_all("table tbody tr")
-                    if linhas:
-                        self.logger.info(f"✓ Encontrados {len(linhas)} items en table tbody tr")
-                except:
-                    pass
-            
-            # Extraer datos de cada fila
-            self.logger.info(f"Procesando {len(linhas)} linhas/items...")
-            
-            for i, linha in enumerate(linhas):
-                try:
-                    imovel = await self._extrair_dados_linha(linha, cidade_atual=cidade_atual)
-                    if imovel:
-                        imoveis.append(imovel)
-                        self.logger.debug(f"Imóvel {i+1} extraído: {imovel.bairro}, R$ {imovel.preco}")
+                    await proximo_btn.click()
+                    await asyncio.sleep(self.config.get("playwright", {}).get("wait_between_requests", 2))
+                    pagina_num += 1
                 except Exception as e:
-                    self.logger.debug(f"Erro ao extrair dados de linha {i}: {e}")
-                    continue
+                    self.logger.warning(f"Error al hacer click en 'Próxima': {e}")
+                    break
             
-            self.logger.info(f"Total de imóveles extraídos: {len(imoveis)}")
+            self.logger.info(f"\n✓ Total de imóveles extraídos (todas las páginas): {len(imoveis)}")
             return imoveis
 
         except Exception as e:
             self.logger.error(f"Error general ao extrair imóveles: {e}", exc_info=True)
-            return []
+            return imoveis
 
     async def _extrair_dados_linha(self, elemento, cidade_atual: str = "") -> Optional[Imovel]:
         """
@@ -1213,6 +1267,8 @@ class CaixaScraper:
                     bairro = match.group(1).strip()
             
             # Link del imóvel (construir URL con ID)
+            # ⚠️ NOTA: Caixa requiere POST para ver detalles
+            # Guardamos solo el ID para que la web use POST
             base_url = self.config.get("urls", {}).get("base_url", "https://venda-imoveis.caixa.gov.br")
             link = f"{base_url}/sistema/venda-online/detalhe_imovel.asp?id={id_imovel}"
             
